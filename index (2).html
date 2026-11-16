@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Cambridge Math Arena — Primary & Lower Secondary</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body>
+  <!-- Toast Notifications -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- Supabase Config Banner (Shown if credentials are not set) -->
+  <div id="config-banner" class="config-banner hidden">
+    <span>⚠️ Supabase is not connected yet.</span>
+    <button id="open-config-btn" class="btn btn-sm btn-amber">Connect Supabase</button>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- AUTHENTICATION PORTAL                                                 -->
+  <!-- ===================================================================== -->
+  <main id="auth-section" class="auth-wrapper">
+    <div class="auth-hero">
+      <div class="math-floaters" aria-hidden="true">
+        <span>π</span><span>∑</span><span>△</span><span>÷</span><span>√</span><span>∠</span>
+      </div>
+      <div class="brand-pill">Cambridge Primary &amp; Lower Secondary</div>
+      <h1>Cambridge Math Arena</h1>
+      <p>
+        Visual problem-solving for Stages 1–9. Practice topic-based picture questions,
+        climb your class leaderboard, and compete across all schools.
+      </p>
+      <div class="feature-highlights">
+        <div class="highlight-item">🏫 <strong>School Classrooms:</strong> Teachers register students with school names</div>
+        <div class="highlight-item">🖼️ <strong>Visual Questions:</strong> Diagram &amp; word-problem challenges</div>
+        <div class="highlight-item">🏆 <strong>Dual Leaderboards:</strong> Class Rank &amp; Global Platform Rank</div>
+        <div class="highlight-item">🎁 <strong>30-Day Free Trial:</strong> Included automatically for every teacher</div>
+      </div>
+      <button id="auth-config-trigger" class="btn-link-subtle">⚙️ Configure Supabase Connection</button>
+    </div>
+
+    <div class="auth-card">
+      <div class="auth-tabs" role="tablist">
+        <button class="auth-tab active" data-auth-tab="student-login">🎓 Student Login</button>
+        <button class="auth-tab" data-auth-tab="staff-login">👩‍🏫 Teacher / Owner</button>
+        <button class="auth-tab" data-auth-tab="teacher-signup">✨ Teacher Sign Up</button>
+      </div>
+
+      <!-- Student Login Form (Username + Password) -->
+      <form id="student-login-form" class="auth-form active">
+        <h2>Student Sign In</h2>
+        <p class="form-subtitle">Enter the username and password created by your teacher.</p>
+        <div class="form-group">
+          <label for="student-username">Username</label>
+          <input type="text" id="student-username" placeholder="e.g. omar_stage6" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="student-password">Password</label>
+          <input type="password" id="student-password" placeholder="••••••••" required autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Start Solving Math →</button>
+      </form>
+
+      <!-- Teacher / Owner Login Form -->
+      <form id="staff-login-form" class="auth-form">
+        <h2>Teacher &amp; Owner Sign In</h2>
+        <p class="form-subtitle">Access your class dashboard, question bank, or subscription tools.</p>
+        <div class="form-group">
+          <label for="staff-email">Email Address</label>
+          <input type="email" id="staff-email" placeholder="teacher@school.edu" required autocomplete="email" />
+        </div>
+        <div class="form-group">
+          <label for="staff-password">Password</label>
+          <input type="password" id="staff-password" placeholder="••••••••" required autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Sign In to Portal</button>
+      </form>
+
+      <!-- Teacher Sign Up Form -->
+      <form id="teacher-signup-form" class="auth-form">
+        <h2>Teacher Registration</h2>
+        <div class="trial-callout">🎉 Includes a <strong>1-Month (30-Day) Free Trial</strong>!</div>
+        <div class="form-group">
+          <label for="teacher-name">Full Name</label>
+          <input type="text" id="teacher-name" placeholder="Ms. Sarah Jenkins" required />
+        </div>
+        <div class="form-group">
+          <label for="teacher-school">School Name</label>
+          <input type="text" id="teacher-school" placeholder="Cambridge International Academy" required />
+        </div>
+        <div class="form-group">
+          <label for="teacher-email">Work Email</label>
+          <input type="email" id="teacher-email" placeholder="s.jenkins@school.edu" required />
+        </div>
+        <div class="form-group">
+          <label for="teacher-password">Password (min 6 characters)</label>
+          <input type="password" id="teacher-password" minlength="6" placeholder="Create a secure password" required />
+        </div>
+        <button type="submit" class="btn btn-amber btn-block">Start 1-Month Free Trial</button>
+      </form>
+    </div>
+  </main>
+
+  <!-- ===================================================================== -->
+  <!-- LOGGED-IN APPLICATION SHELL                                           -->
+  <!-- ===================================================================== -->
+  <div id="app-section" class="app-shell hidden">
+    <header class="top-header">
+      <div class="header-left">
+        <div class="logo-mark">π</div>
+        <div>
+          <span class="logo-title">Cambridge Math Arena</span>
+          <span class="logo-sub">Primary &amp; Lower Secondary</span>
+        </div>
+      </div>
+
+      <nav id="main-nav" class="main-nav"></nav>
+
+      <div class="header-right">
+        <div class="user-pill">
+          <span id="header-role-badge" class="badge">ROLE</span>
+          <div class="user-meta">
+            <strong id="header-user-name">User</strong>
+            <small id="header-school-badge">School</small>
+          </div>
+          <span id="header-score-badge" class="score-pill hidden">0 pts</span>
+        </div>
+        <button id="logout-btn" class="btn btn-outline btn-sm">Sign Out</button>
+      </div>
+    </header>
+
+    <div class="workspace">
+      <!-- ================================================================= -->
+      <!-- OWNER VIEW 1: QUESTION BANK & TOPICS                              -->
+      <!-- ================================================================= -->
+      <section id="view-owner-questions" class="view-panel hidden">
+        <div class="panel-header">
+          <div>
+            <h2>🖼️ Question Bank &amp; Topic Manager</h2>
+            <p>Upload Cambridge math question images and define one or multiple accepted answers.</p>
+          </div>
+        </div>
+
+        <div class="grid-2-col">
+          <!-- Add Question Form -->
+          <div class="card">
+            <h3>Upload New Question Image</h3>
+            <form id="add-question-form">
+              <div class="form-row">
+                <div class="form-group">
+                  <label for="q-topic">Topic Category</label>
+                  <select id="q-topic" required></select>
+                </div>
+                <div class="form-group">
+                  <label for="q-stage">Cambridge Stage</label>
+                  <select id="q-stage" required>
+                    <option value="Primary Stage 1">Primary Stage 1</option>
+                    <option value="Primary Stage 2">Primary Stage 2</option>
+                    <option value="Primary Stage 3">Primary Stage 3</option>
+                    <option value="Primary Stage 4">Primary Stage 4</option>
+                    <option value="Primary Stage 5" selected>Primary Stage 5</option>
+                    <option value="Primary Stage 6">Primary Stage 6</option>
+                    <option value="Lower Secondary Stage 7">Lower Secondary Stage 7</option>
+                    <option value="Lower Secondary Stage 8">Lower Secondary Stage 8</option>
+                    <option value="Lower Secondary Stage 9">Lower Secondary Stage 9</option>
+                  </select>
+                </div>
+              </div>
+
+              <div class="form-row">
+                <div class="form-group" style="flex:2;">
+                  <label for="q-title">Question Label / Prompt</label>
+                  <input type="text" id="q-title" placeholder="e.g. Find the missing angle x" required />
+                </div>
+                <div class="form-group" style="flex:1;">
+                  <label for="q-points">Points</label>
+                  <input type="number" id="q-points" value="10" min="1" max="500" required />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="q-image-file">Question Image (PNG, JPG, WEBP)</label>
+                <input type="file" id="q-image-file" accept="image/*" required />
+                <div id="q-image-preview-wrap" class="image-preview-wrap hidden">
+                  <img id="q-image-preview" alt="Question preview" />
+                </div>
+              </div>
+
+              <div class="form-group">
+                <label for="q-answer-input">Accepted Answer(s) <small class="muted">(case-insensitive; add multiple variations)</small></label>
+                <div class="answer-builder">
+                  <input type="text" id="q-answer-input" placeholder="Type an answer (e.g. 45 or 45 cm) and click Add" />
+                  <button type="button" id="add-answer-chip-btn" class="btn btn-secondary btn-sm">+ Add</button>
+                </div>
+                <div id="q-answers-chips" class="chips-container"></div>
+              </div>
+
+              <button type="submit" id="publish-question-btn" class="btn btn-primary btn-block">Publish Question</button>
+            </form>
+          </div>
+
+          <!-- Manage Topics Card -->
+          <div class="card">
+            <h3>Manage Math Topics</h3>
+            <form id="add-topic-form" class="mb-md">
+              <div class="form-row">
+                <div class="form-group" style="flex:2;">
+                  <label for="topic-name">New Topic Name</label>
+                  <input type="text" id="topic-name" placeholder="e.g. Ratio & Proportion" required />
+                </div>
+                <div class="form-group" style="flex:1;">
+                  <label for="topic-icon">Icon</label>
+                  <input type="text" id="topic-icon" value="📏" maxlength="4" required />
+                </div>
+              </div>
+              <div class="form-group">
+                <label for="topic-stage">Stage Group</label>
+                <input type="text" id="topic-stage" value="Primary & Lower Secondary" required />
+              </div>
+              <div class="form-group">
+                <label for="topic-desc">Short Description</label>
+                <input type="text" id="topic-desc" placeholder="Solving ratio word problems..." />
+              </div>
+              <button type="submit" class="btn btn-amber btn-sm">+ Create Topic</button>
+            </form>
+
+            <h4 class="sub-heading">Existing Topics</h4>
+            <div id="owner-topics-list" class="topics-mini-list"></div>
+          </div>
+        </div>
+
+        <!-- Existing Questions Bank -->
+        <div class="card mt-lg">
+          <div class="card-toolbar">
+            <h3>Published Questions</h3>
+            <select id="owner-questions-filter-topic" class="select-inline">
+              <option value="all">All Topics</option>
+            </select>
+          </div>
+          <div id="owner-questions-list" class="questions-grid"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- OWNER VIEW 2: TEACHERS & SUBSCRIPTION WAIVERS                     -->
+      <!-- ================================================================= -->
+      <section id="view-owner-teachers" class="view-panel hidden">
+        <div class="panel-header">
+          <div>
+            <h2>👩‍🏫 Teachers &amp; Subscription Management</h2>
+            <p>Every teacher gets a 1-month free trial. Waive subscription fees for partner schools anytime.</p>
+          </div>
+        </div>
+
+        <div class="stats-row">
+          <div class="stat-card">
+            <span class="stat-label">Registered Teachers</span>
+            <strong id="owner-stat-teachers" class="stat-value">0</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Fee-Waived Accounts</span>
+            <strong id="owner-stat-waived" class="stat-value text-emerald">0</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Total Platform Students</span>
+            <strong id="owner-stat-students" class="stat-value text-blue">0</strong>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Teacher</th>
+                  <th>School Name</th>
+                  <th>Students</th>
+                  <th>Trial Ends</th>
+                  <th>Subscription Status</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="owner-teachers-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- TEACHER VIEW: CLASSROOM, STUDENT CREATION & CLASS DASHBOARD       -->
+      <!-- ================================================================= -->
+      <section id="view-teacher-class" class="view-panel hidden">
+        <div id="teacher-trial-banner" class="trial-banner"></div>
+
+        <div class="stats-row">
+          <div class="stat-card">
+            <span class="stat-label">My Students</span>
+            <strong id="teacher-stat-count" class="stat-value">0</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Class Average Score</span>
+            <strong id="teacher-stat-avg" class="stat-value text-blue">0</strong>
+          </div>
+          <div class="stat-card">
+            <span class="stat-label">Top Class Score</span>
+            <strong id="teacher-stat-top" class="stat-value text-amber">0</strong>
+          </div>
+        </div>
+
+        <div class="grid-teacher">
+          <!-- Register New Student -->
+          <div class="card">
+            <h3>➕ Register New Student</h3>
+            <p class="muted mb-md">Create a username and password so your student can log in and solve questions.</p>
+            <form id="create-student-form">
+              <div class="form-group">
+                <label for="new-student-name">Student Full Name</label>
+                <input type="text" id="new-student-name" placeholder="e.g. Layla Hassan" required />
+              </div>
+              <div class="form-group">
+                <label for="new-student-username">Username (letters, numbers, _)</label>
+                <input type="text" id="new-student-username" pattern="[a-zA-Z0-9_.]+" minlength="3" placeholder="e.g. layla_g5" required />
+              </div>
+              <div class="form-group">
+                <label for="new-student-password">Password (min 6 chars)</label>
+                <input type="password" id="new-student-password" minlength="6" placeholder="Student password" required />
+              </div>
+              <div class="form-group">
+                <label for="new-student-school">School Name</label>
+                <input type="text" id="new-student-school" placeholder="School name" required />
+              </div>
+              <button type="submit" id="create-student-btn" class="btn btn-primary btn-block">Create Student Account</button>
+            </form>
+          </div>
+
+          <!-- Teacher Class Dashboard (Ranked by Score) -->
+          <div class="card">
+            <div class="card-toolbar">
+              <div>
+                <h3>🏆 Teacher Class Dashboard</h3>
+                <p class="muted">Students in your class ranked by score</p>
+              </div>
+              <input type="search" id="teacher-class-search" class="search-input" placeholder="Search student..." />
+            </div>
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Rank</th>
+                    <th>Student</th>
+                    <th>Username</th>
+                    <th>School</th>
+                    <th>Solved</th>
+                    <th>Score</th>
+                  </tr>
+                </thead>
+                <tbody id="teacher-class-tbody"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- STUDENT VIEW 1: TOPICS & IMAGE QUESTION PRACTICE                  -->
+      <!-- ================================================================= -->
+      <section id="view-student-practice" class="view-panel hidden">
+        <div class="student-welcome">
+          <div>
+            <h2>📐 Choose a Mathematics Topic</h2>
+            <p>Select a Cambridge Mathematics topic below, inspect the problem image, and submit your answer!</p>
+          </div>
+          <div class="student-quick-stats">
+            <div class="quick-pill">⭐ Score: <strong id="student-my-score">0</strong></div>
+            <div class="quick-pill">✅ Solved: <strong id="student-my-solved">0</strong></div>
+          </div>
+        </div>
+
+        <!-- Topics Grid -->
+        <div id="student-topics-grid" class="topics-grid"></div>
+
+        <!-- Questions Inside Selected Topic -->
+        <div id="student-topic-questions-area" class="hidden">
+          <div class="card-toolbar mb-md">
+            <div class="flex-center">
+              <button id="back-to-topics-btn" class="btn btn-outline btn-sm">← All Topics</button>
+              <h3 id="active-topic-heading" style="margin:0;">Topic</h3>
+            </div>
+            <select id="student-q-filter" class="select-inline">
+              <option value="all">Show All</option>
+              <option value="unsolved">Unsolved Only</option>
+              <option value="solved">Solved Only</option>
+            </select>
+          </div>
+          <div id="student-questions-list" class="student-questions-grid"></div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- STUDENT VIEW 2: CLASS DASHBOARD (TEACHER'S CLASS LEADERBOARD)     -->
+      <!-- ================================================================= -->
+      <section id="view-class-dashboard" class="view-panel hidden">
+        <div class="panel-header">
+          <div>
+            <h2>🏫 My Class Dashboard</h2>
+            <p id="student-class-subtitle">Rankings within your teacher's class</p>
+          </div>
+          <div id="student-class-rank-pill" class="rank-highlight-pill">Your Class Rank: #-</div>
+        </div>
+
+        <div class="card">
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Student</th>
+                  <th>School</th>
+                  <th>Questions Solved</th>
+                  <th>Score</th>
+                </tr>
+              </thead>
+              <tbody id="student-class-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================================================================= -->
+      <!-- SHARED VIEW: GLOBAL PLATFORM LEADERBOARD (ALL STUDENTS)           -->
+      <!-- ================================================================= -->
+      <section id="view-global-dashboard" class="view-panel hidden">
+        <div class="panel-header">
+          <div>
+            <h2>🌍 All-Platform Student Dashboard</h2>
+            <p>Live ranking of every student across all schools on Cambridge Math Arena</p>
+          </div>
+          <input type="search" id="global-search" class="search-input" placeholder="Search student or school..." />
+        </div>
+
+        <!-- Top 3 Podium -->
+        <div id="global-podium" class="podium-grid"></div>
+
+        <div class="card mt-lg">
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Rank</th>
+                  <th>Student</th>
+                  <th>School Name</th>
+                  <th>Questions Solved</th>
+                  <th>Total Score</th>
+                </tr>
+              </thead>
+              <tbody id="global-leaderboard-tbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ===================================================================== -->
+  <!-- MODALS (IMAGE ZOOM & SUPABASE CONFIG)                                 -->
+  <!-- ===================================================================== -->
+  <div id="image-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content modal-image-box">
+      <button id="close-image-modal" class="modal-close" aria-label="Close">&times;</button>
+      <img id="modal-img" alt="Zoomed Math Question" />
+    </div>
+  </div>
+
+  <div id="config-modal" class="modal hidden" role="dialog" aria-modal="true">
+    <div class="modal-backdrop"></div>
+    <div class="modal-content">
+      <button id="close-config-modal" class="modal-close" aria-label="Close">&times;</button>
+      <h3>Connect to Supabase</h3>
+      <p class="muted mb-md">
+        Paste your Supabase Project URL and Publishable/Anon Key (from Project Settings → API).
+        These are saved in your browser's <code>localStorage</code>, or you can hardcode them in <code>app.js</code>.
+      </p>
+      <form id="config-form">
+        <div class="form-group">
+          <label for="supabase-url-input">Supabase Project URL</label>
+          <input type="url" id="supabase-url-input" placeholder="https://your-project.supabase.co" required />
+        </div>
+        <div class="form-group">
+          <label for="supabase-key-input">Supabase Anon / Publishable Key</label>
+          <input type="text" id="supabase-key-input" placeholder="eyJhbGciOiJIUzI1NiIsInR5cCI6..." required />
+        </div>
+        <button type="submit" class="btn btn-primary btn-block">Save &amp; Connect</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
