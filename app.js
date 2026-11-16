@@ -3,8 +3,8 @@
 // ============================================================================
 
 // Option A: Hardcode your Supabase credentials here
-const DEFAULT_SUPABASE_URL = "";
-const DEFAULT_SUPABASE_ANON_KEY = "";
+const DEFAULT_SUPABASE_URL = "https://yktszhisgtrzggorhzwo.supabase.co";
+const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrdHN6aGlzZ3Ryemdnb3JoendvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4MjYzOTAsImV4cCI6MjExMDQwMjM5MH0.jKaihUD8OoFyQe7hEF8VPytPQg6PfZx0ir6rNJqEwbE";
 
 // Synthetic domain used so students can log in with Username + Password only
 const STUDENT_EMAIL_DOMAIN = "student.cambridgemath.local";
