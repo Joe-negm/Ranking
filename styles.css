@@ -919,3 +919,23 @@ h1, h2, h3, h4, .logo-title {
     gap: 0;
   }
 }
+
+/* Answer group UI */
+.answer-group-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.75rem; margin-bottom: 0.4rem;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; flex-wrap: wrap;
+}
+.answer-group-builder {
+  display: flex; gap: 0.5rem; align-items: center;
+  flex-wrap: wrap; margin-top: 0.5rem;
+}
+.answer-group-builder input { flex: 1; min-width: 200px; }
+.answer-group-builder select { min-width: 180px; }
+.answer-group-builder button { flex: 0 0 auto; }
+.required-badge { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 800; }
+.alternative-badge { background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 800; }
+.group-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.group-preview-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.table-actions { white-space: nowrap; }
