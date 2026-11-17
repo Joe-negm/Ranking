@@ -9,20 +9,35 @@
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <style>
+    .answer-group-item {
+      display: flex; align-items: center; gap: 0.5rem;
+      padding: 0.5rem 0.75rem; margin-bottom: 0.4rem;
+      background: var(--bg); border: 1px solid var(--border);
+      border-radius: 8px; flex-wrap: wrap;
+    }
+    .answer-group-builder {
+      display: flex; gap: 0.5rem; align-items: center;
+      flex-wrap: wrap; margin-top: 0.5rem;
+    }
+    .answer-group-builder input { flex: 1; min-width: 200px; }
+    .answer-group-builder select { min-width: 180px; }
+    .answer-group-builder button { flex: 0 0 auto; }
+    .required-badge { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 800; }
+    .alternative-badge { background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 800; }
+    .group-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+    .group-preview-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+    .table-actions { white-space: nowrap; }
+  </style>
 </head>
 <body>
-  <!-- Toast Notifications -->
   <div id="toast-container" class="toast-container"></div>
 
-  <!-- Supabase Config Banner (Shown if credentials are not set) -->
   <div id="config-banner" class="config-banner hidden">
     <span>⚠️ Supabase is not connected yet.</span>
     <button id="open-config-btn" class="btn btn-sm btn-amber">Connect Supabase</button>
   </div>
 
-  <!-- ===================================================================== -->
-  <!-- AUTHENTICATION PORTAL                                                 -->
-  <!-- ===================================================================== -->
   <main id="auth-section" class="auth-wrapper">
     <div class="auth-hero">
       <div class="math-floaters" aria-hidden="true">
@@ -50,7 +65,6 @@
         <button class="auth-tab" data-auth-tab="teacher-signup">✨ Teacher Sign Up</button>
       </div>
 
-      <!-- Student Login Form (Username + Password) -->
       <form id="student-login-form" class="auth-form active">
         <h2>Student Sign In</h2>
         <p class="form-subtitle">Enter the username and password created by your teacher.</p>
@@ -65,7 +79,6 @@
         <button type="submit" class="btn btn-primary btn-block">Start Solving Math →</button>
       </form>
 
-      <!-- Teacher / Owner Login Form -->
       <form id="staff-login-form" class="auth-form">
         <h2>Teacher &amp; Owner Sign In</h2>
         <p class="form-subtitle">Access your class dashboard, question bank, or subscription tools.</p>
@@ -80,7 +93,6 @@
         <button type="submit" class="btn btn-primary btn-block">Sign In to Portal</button>
       </form>
 
-      <!-- Teacher Sign Up Form -->
       <form id="teacher-signup-form" class="auth-form">
         <h2>Teacher Registration</h2>
         <div class="trial-callout">🎉 Includes a <strong>1-Month (30-Day) Free Trial</strong>!</div>
@@ -105,9 +117,6 @@
     </div>
   </main>
 
-  <!-- ===================================================================== -->
-  <!-- LOGGED-IN APPLICATION SHELL                                           -->
-  <!-- ===================================================================== -->
   <div id="app-section" class="app-shell hidden">
     <header class="top-header">
       <div class="header-left">
@@ -117,9 +126,7 @@
           <span class="logo-sub">Primary &amp; Lower Secondary</span>
         </div>
       </div>
-
       <nav id="main-nav" class="main-nav"></nav>
-
       <div class="header-right">
         <div class="user-pill">
           <span id="header-role-badge" class="badge">ROLE</span>
@@ -134,19 +141,16 @@
     </header>
 
     <div class="workspace">
-      <!-- ================================================================= -->
-      <!-- OWNER VIEW 1: QUESTION BANK & TOPICS                              -->
-      <!-- ================================================================= -->
+      <!-- OWNER: Questions & Topics -->
       <section id="view-owner-questions" class="view-panel hidden">
         <div class="panel-header">
           <div>
             <h2>🖼️ Question Bank &amp; Topic Manager</h2>
-            <p>Upload Cambridge math question images and define one or multiple accepted answers.</p>
+            <p>Upload Cambridge math question images and define required and alternative answers.</p>
           </div>
         </div>
 
         <div class="grid-2-col">
-          <!-- Add Question Form -->
           <div class="card">
             <h3>Upload New Question Image</h3>
             <form id="add-question-form">
@@ -191,19 +195,33 @@
               </div>
 
               <div class="form-group">
-                <label for="q-answer-input">Accepted Answer(s) <small class="muted">(case-insensitive; add multiple variations)</small></label>
-                <div class="answer-builder">
-                  <input type="text" id="q-answer-input" placeholder="Type an answer (e.g. 45 or 45 cm) and click Add" />
-                  <button type="button" id="add-answer-chip-btn" class="btn btn-secondary btn-sm">+ Add</button>
+                <label>
+                  <input type="checkbox" id="q-require-multi" />
+                  Require multiple answers from students (e.g. "3, 4")
+                </label>
+              </div>
+
+              <div class="form-group">
+                <label>Accepted Answers</label>
+                <p class="muted" style="margin:0 0 8px;font-size:0.85rem;">
+                  <strong>Required</strong> = student must provide this exact answer.
+                  <strong>Alternative</strong> = any one of these values counts.
+                </p>
+                <div id="answer-groups-container"></div>
+                <div class="answer-group-builder">
+                  <select id="new-group-type">
+                    <option value="required">🔒 Required</option>
+                    <option value="alternative">🔀 Alternative</option>
+                  </select>
+                  <input type="text" id="new-group-values" placeholder="e.g. 45, 45 cm, forty-five" />
+                  <button type="button" id="add-answer-group-btn" class="btn btn-secondary btn-sm">+ Add Group</button>
                 </div>
-                <div id="q-answers-chips" class="chips-container"></div>
               </div>
 
               <button type="submit" id="publish-question-btn" class="btn btn-primary btn-block">Publish Question</button>
             </form>
           </div>
 
-          <!-- Manage Topics Card -->
           <div class="card">
             <h3>Manage Math Topics</h3>
             <form id="add-topic-form" class="mb-md">
@@ -233,7 +251,6 @@
           </div>
         </div>
 
-        <!-- Existing Questions Bank -->
         <div class="card mt-lg">
           <div class="card-toolbar">
             <h3>Published Questions</h3>
@@ -245,9 +262,7 @@
         </div>
       </section>
 
-      <!-- ================================================================= -->
-      <!-- OWNER VIEW 2: TEACHERS & SUBSCRIPTION WAIVERS                     -->
-      <!-- ================================================================= -->
+      <!-- OWNER: Teachers & Waivers -->
       <section id="view-owner-teachers" class="view-panel hidden">
         <div class="panel-header">
           <div>
@@ -255,7 +270,6 @@
             <p>Every teacher gets a 1-month free trial. Waive subscription fees for partner schools anytime.</p>
           </div>
         </div>
-
         <div class="stats-row">
           <div class="stat-card">
             <span class="stat-label">Registered Teachers</span>
@@ -270,7 +284,6 @@
             <strong id="owner-stat-students" class="stat-value text-blue">0</strong>
           </div>
         </div>
-
         <div class="card">
           <div class="table-responsive">
             <table class="data-table">
@@ -290,9 +303,7 @@
         </div>
       </section>
 
-      <!-- ================================================================= -->
-      <!-- TEACHER VIEW: CLASSROOM, STUDENT CREATION & CLASS DASHBOARD       -->
-      <!-- ================================================================= -->
+      <!-- TEACHER: Class Dashboard -->
       <section id="view-teacher-class" class="view-panel hidden">
         <div id="teacher-trial-banner" class="trial-banner"></div>
 
@@ -312,7 +323,6 @@
         </div>
 
         <div class="grid-teacher">
-          <!-- Register New Student -->
           <div class="card">
             <h3>➕ Register New Student</h3>
             <p class="muted mb-md">Create a username and password so your student can log in and solve questions.</p>
@@ -337,7 +347,6 @@
             </form>
           </div>
 
-          <!-- Teacher Class Dashboard (Ranked by Score) -->
           <div class="card">
             <div class="card-toolbar">
               <div>
@@ -356,6 +365,7 @@
                     <th>School</th>
                     <th>Solved</th>
                     <th>Score</th>
+                    <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody id="teacher-class-tbody"></tbody>
@@ -365,9 +375,7 @@
         </div>
       </section>
 
-      <!-- ================================================================= -->
-      <!-- STUDENT VIEW 1: TOPICS & IMAGE QUESTION PRACTICE                  -->
-      <!-- ================================================================= -->
+      <!-- STUDENT: Practice Topics -->
       <section id="view-student-practice" class="view-panel hidden">
         <div class="student-welcome">
           <div>
@@ -380,10 +388,8 @@
           </div>
         </div>
 
-        <!-- Topics Grid -->
         <div id="student-topics-grid" class="topics-grid"></div>
 
-        <!-- Questions Inside Selected Topic -->
         <div id="student-topic-questions-area" class="hidden">
           <div class="card-toolbar mb-md">
             <div class="flex-center">
@@ -400,9 +406,7 @@
         </div>
       </section>
 
-      <!-- ================================================================= -->
-      <!-- STUDENT VIEW 2: CLASS DASHBOARD (TEACHER'S CLASS LEADERBOARD)     -->
-      <!-- ================================================================= -->
+      <!-- STUDENT: Class Dashboard -->
       <section id="view-class-dashboard" class="view-panel hidden">
         <div class="panel-header">
           <div>
@@ -411,7 +415,6 @@
           </div>
           <div id="student-class-rank-pill" class="rank-highlight-pill">Your Class Rank: #-</div>
         </div>
-
         <div class="card">
           <div class="table-responsive">
             <table class="data-table">
@@ -430,9 +433,7 @@
         </div>
       </section>
 
-      <!-- ================================================================= -->
-      <!-- SHARED VIEW: GLOBAL PLATFORM LEADERBOARD (ALL STUDENTS)           -->
-      <!-- ================================================================= -->
+      <!-- SHARED: Global Dashboard -->
       <section id="view-global-dashboard" class="view-panel hidden">
         <div class="panel-header">
           <div>
@@ -441,10 +442,7 @@
           </div>
           <input type="search" id="global-search" class="search-input" placeholder="Search student or school..." />
         </div>
-
-        <!-- Top 3 Podium -->
         <div id="global-podium" class="podium-grid"></div>
-
         <div class="card mt-lg">
           <div class="table-responsive">
             <table class="data-table">
@@ -465,9 +463,6 @@
     </div>
   </div>
 
-  <!-- ===================================================================== -->
-  <!-- MODALS (IMAGE ZOOM & SUPABASE CONFIG)                                 -->
-  <!-- ===================================================================== -->
   <div id="image-modal" class="modal hidden" role="dialog" aria-modal="true">
     <div class="modal-backdrop"></div>
     <div class="modal-content modal-image-box">
@@ -483,7 +478,6 @@
       <h3>Connect to Supabase</h3>
       <p class="muted mb-md">
         Paste your Supabase Project URL and Publishable/Anon Key (from Project Settings → API).
-        These are saved in your browser's <code>localStorage</code>, or you can hardcode them in <code>app.js</code>.
       </p>
       <form id="config-form">
         <div class="form-group">
