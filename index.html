@@ -9,26 +9,6 @@
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@500;600;700;800&family=Outfit:wght@600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="styles.css" />
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <style>
-    .answer-group-item {
-      display: flex; align-items: center; gap: 0.5rem;
-      padding: 0.5rem 0.75rem; margin-bottom: 0.4rem;
-      background: var(--bg); border: 1px solid var(--border);
-      border-radius: 8px; flex-wrap: wrap;
-    }
-    .answer-group-builder {
-      display: flex; gap: 0.5rem; align-items: center;
-      flex-wrap: wrap; margin-top: 0.5rem;
-    }
-    .answer-group-builder input { flex: 1; min-width: 200px; }
-    .answer-group-builder select { min-width: 180px; }
-    .answer-group-builder button { flex: 0 0 auto; }
-    .required-badge { background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 800; }
-    .alternative-badge { background: #dbeafe; color: #1e40af; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: 800; }
-    .group-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
-    .group-preview-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
-    .table-actions { white-space: nowrap; }
-  </style>
 </head>
 <body>
   <div id="toast-container" class="toast-container"></div>
@@ -146,7 +126,7 @@
         <div class="panel-header">
           <div>
             <h2>🖼️ Question Bank &amp; Topic Manager</h2>
-            <p>Upload Cambridge math question images and define required and alternative answers.</p>
+            <p>Upload question images. Add one group per required answer; each group lists all acceptable equivalents.</p>
           </div>
         </div>
 
@@ -197,24 +177,24 @@
               <div class="form-group">
                 <label>
                   <input type="checkbox" id="q-require-multi" />
-                  Require multiple answers from students (e.g. "3, 4")
+                  This question needs more than one answer
                 </label>
               </div>
 
               <div class="form-group">
-                <label>Accepted Answers</label>
+                <label>Accepted Answers (one group per required answer)</label>
                 <p class="muted" style="margin:0 0 8px;font-size:0.85rem;">
-                  <strong>Required</strong> = student must provide this exact answer.
-                  <strong>Alternative</strong> = any one of these values counts.
+                  Add one group per required answer. Inside each group, list every acceptable
+                  equivalent — e.g. <code>3, three, 3.0</code>. The student sees
+                  <strong>one box per group</strong> and each box is checked against its own list.
                 </p>
                 <div id="answer-groups-container"></div>
                 <div class="answer-group-builder">
-                  <select id="new-group-type">
-                    <option value="required">🔒 Required</option>
-                    <option value="alternative">🔀 Alternative</option>
-                  </select>
-                  <input type="text" id="new-group-values" placeholder="e.g. 45, 45 cm, forty-five" />
-                  <button type="button" id="add-answer-group-btn" class="btn btn-secondary btn-sm">+ Add Group</button>
+                  <input type="text" id="new-group-values"
+                         placeholder="e.g. 3, three, 3.0" />
+                  <button type="button" id="add-answer-group-btn" class="btn btn-secondary btn-sm">
+                    + Add Group
+                  </button>
                 </div>
               </div>
 
