@@ -939,3 +939,61 @@ h1, h2, h3, h4, .logo-title {
 .group-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
 .group-preview-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
 .table-actions { white-space: nowrap; }
+
+
+/* Answer group UI (owner side) */
+.answer-group-item {
+  display: flex; align-items: center; gap: 0.5rem;
+  padding: 0.5rem 0.75rem; margin-bottom: 0.4rem;
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: 8px; flex-wrap: wrap;
+}
+.answer-group-builder {
+  display: flex; gap: 0.5rem; align-items: center;
+  flex-wrap: wrap; margin-top: 0.5rem;
+}
+.answer-group-builder input { flex: 1; min-width: 200px; }
+.answer-group-builder button { flex: 0 0 auto; }
+.required-badge {
+  background: #fef3c7; color: #92400e;
+  padding: 2px 6px; border-radius: 4px;
+  font-size: 0.75rem; font-weight: 800;
+}
+.group-preview { display: flex; flex-direction: column; gap: 4px; margin-top: 6px; }
+.group-preview-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.table-actions { white-space: nowrap; }
+
+/* Student answer form: one input per slot */
+.student-answer-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+.student-answer-form input.answer-slot {
+  width: 100%;
+  padding: 0.55rem 0.75rem;
+  border: 1.5px solid var(--border);
+  border-radius: 9px;
+  font-family: inherit;
+  font-size: 0.95rem;
+}
+.student-answer-form input.answer-slot:focus {
+  outline: none;
+  border-color: var(--blue);
+  box-shadow: 0 0 0 3px rgba(29, 78, 216, 0.12);
+}
+.student-answer-form input.answer-slot:disabled {
+  background: #f1f5f9;
+  color: var(--muted);
+}
+.answer-slot-label {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--navy);
+  margin-top: 0.25rem;
+}
+.student-answer-form button {
+  align-self: flex-start;
+  margin-top: 0.4rem;
+}
