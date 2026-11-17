@@ -1,5 +1,7 @@
 // ============================================================================
-// Cambridge Math Arena — Frontend (v2 with multi-answer + delete student)
+// Cambridge Math Arena — Frontend
+// Slot-based grading: one input per required answer, each with its own
+// equivalence list. Teacher can delete students.
 // ============================================================================
 
 const DEFAULT_SUPABASE_URL = "https://yktszhisgtrzggorhzwo.supabase.co";
@@ -14,7 +16,7 @@ let currentProfile = null;
 let allTopics = [];
 let allQuestions = [];
 let mySolvedQuestionIds = new Set();
-let pendingAnswerGroups = [];   // [{ type: 'required'|'alternative', values: [] }]
+let pendingAnswerGroups = [];   // [{ values: [...] }] — one per required slot
 let activeTopicId = null;
 let teacherStudentsCache = [];
 let globalStudentsCache = [];
@@ -272,18 +274,13 @@ function bindStaticEvents() {
     wrap.classList.remove("hidden");
   });
 
-  // Answer group builder
+  // Add answer group (one group = one required answer slot)
   document.getElementById("add-answer-group-btn").addEventListener("click", () => {
-    const type = document.getElementById("new-group-type").value;
     const raw = document.getElementById("new-group-values").value.trim();
     if (!raw) return;
     const values = raw.split(",").map(s => s.trim()).filter(Boolean);
     if (values.length === 0) return;
-    if (type === "required" && values.length > 1) {
-      showToast("Required answers are one value each. Add one per group.", "error");
-      return;
-    }
-    pendingAnswerGroups.push({ type, values });
+    pendingAnswerGroups.push({ values });
     document.getElementById("new-group-values").value = "";
     renderAnswerGroups();
   });
@@ -322,7 +319,7 @@ function openImageZoom(url) {
 window.openImageZoom = openImageZoom;
 
 // ----------------------------------------------------------------------------
-// Answer group builder UI
+// Answer group builder UI (owner side)
 // ----------------------------------------------------------------------------
 function renderAnswerGroups() {
   const c = document.getElementById("answer-groups-container");
@@ -331,18 +328,13 @@ function renderAnswerGroups() {
     c.innerHTML = `<p class="muted" style="font-size:0.85rem;margin:0 0 4px;">No answer groups yet.</p>`;
     return;
   }
-  c.innerHTML = pendingAnswerGroups.map((g, i) => {
-    const badge = g.type === "required"
-      ? `<span class="required-badge">REQUIRED</span>`
-      : `<span class="alternative-badge">ANY OF</span>`;
-    return `
-      <div class="answer-group-item">
-        ${badge}
-        ${g.values.map(v => `<span class="answer-chip">${escapeHtml(v)}</span>`).join(" ")}
-        <button type="button" class="btn btn-danger btn-sm"
-          onclick="removeAnswerGroup(${i})" style="margin-left:auto;">×</button>
-      </div>`;
-  }).join("");
+  c.innerHTML = pendingAnswerGroups.map((g, i) => `
+    <div class="answer-group-item">
+      <span class="required-badge">SLOT ${i + 1}</span>
+      ${g.values.map(v => `<span class="answer-chip">${escapeHtml(v)}</span>`).join(" ")}
+      <button type="button" class="btn btn-danger btn-sm"
+        onclick="removeAnswerGroup(${i})" style="margin-left:auto;">×</button>
+    </div>`).join("");
 }
 window.removeAnswerGroup = function (i) {
   pendingAnswerGroups.splice(i, 1);
@@ -461,11 +453,9 @@ function renderOwnerQuestions() {
   }
   container.innerHTML = filtered.map(q => {
     const topic = topicMap.get(q.topic_id);
-    const groupsHtml = (q.answer_groups || []).map(g => `
+    const groupsHtml = (q.answer_groups || []).map((g, i) => `
       <div class="group-preview-row">
-        ${g.type === "required"
-          ? `<span class="required-badge">REQ</span>`
-          : `<span class="alternative-badge">ANY</span>`}
+        <span class="required-badge">SLOT ${i + 1}</span>
         ${(g.values || []).map(v => `<span class="answer-chip">${escapeHtml(v)}</span>`).join(" ")}
       </div>`).join("");
     return `
@@ -682,7 +672,7 @@ async function handleTeacherCreateStudent(e) {
 // Student: Practice
 // ----------------------------------------------------------------------------
 async function loadStudentPracticeView() {
-  const [topicsRes, questionsRes, attemptsRes, profileRes] = await Promise.all([
+  const [topicsRes, questionsRes, attemptsRes, profileRes, countsRes] = await Promise.all([
     supabaseClient.from("topics").select("*").order("name"),
     supabaseClient.from("questions").select("*").order("created_at", { ascending: true }),
     supabaseClient.from("student_attempts")
@@ -691,7 +681,9 @@ async function loadStudentPracticeView() {
       .eq("is_correct", true),
     supabaseClient.from("profiles").select("score, questions_solved")
       .eq("id", currentProfile.id).single(),
+    supabaseClient.rpc("get_question_answer_counts"),
   ]);
+
   if (profileRes.data) {
     currentProfile.score = profileRes.data.score;
     currentProfile.questions_solved = profileRes.data.questions_solved;
@@ -700,8 +692,15 @@ async function loadStudentPracticeView() {
   document.getElementById("student-my-solved").textContent = currentProfile.questions_solved;
   document.getElementById("header-score-badge").textContent = `${currentProfile.score} pts`;
 
+  const countMap = new Map(
+    (countsRes.data || []).map(r => [r.question_id, Number(r.required_count) || 0])
+  );
+
   allTopics = topicsRes.data || [];
-  allQuestions = questionsRes.data || [];
+  allQuestions = (questionsRes.data || []).map(q => ({
+    ...q,
+    slot_count: countMap.get(q.id) || 0,
+  }));
   mySolvedQuestionIds = new Set((attemptsRes.data || []).map(a => a.question_id));
 
   renderStudentTopicsGrid();
@@ -745,15 +744,31 @@ function renderStudentTopicQuestions() {
   let qs = allQuestions.filter(q => q.topic_id === activeTopicId);
   if (filter === "solved") qs = qs.filter(q => mySolvedQuestionIds.has(q.id));
   if (filter === "unsolved") qs = qs.filter(q => !mySolvedQuestionIds.has(q.id));
+
   const c = document.getElementById("student-questions-list");
   if (qs.length === 0) { c.innerHTML = `<p class="muted">No questions match this filter.</p>`; return; }
 
   c.innerHTML = qs.map(q => {
     const isSolved = mySolvedQuestionIds.has(q.id);
-    const multi = q.require_multi_answers;
-    const placeholder = multi
-      ? "e.g. 3, 4  (separate with commas)"
-      : "Enter your answer...";
+    const slotCount = q.slot_count || 0;
+
+    let inputsHtml = "";
+    if (slotCount > 0) {
+      for (let i = 0; i < slotCount; i++) {
+        inputsHtml += `
+          <label class="answer-slot-label">Answer #${i + 1}</label>
+          <input type="text" class="answer-slot" data-qid="${q.id}"
+                 data-index="${i}" placeholder="Answer ${i + 1}"
+                 ${isSolved ? "disabled" : ""} />`;
+      }
+    } else {
+      inputsHtml = `
+        <label class="answer-slot-label">Answer</label>
+        <input type="text" class="answer-slot" data-qid="${q.id}"
+               data-index="0" placeholder="Enter your answer..."
+               ${isSolved ? "disabled" : ""} />`;
+    }
+
     return `
       <div class="question-card ${isSolved ? "solved" : ""}" id="q-card-${q.id}">
         <div class="question-img-box" onclick="openImageZoom('${escapeHtml(q.image_url)}')">
@@ -763,14 +778,16 @@ function renderStudentTopicQuestions() {
           <div class="question-meta">
             <span class="stage-tag">${escapeHtml(q.stage)}</span>
             <span class="points-tag">${isSolved ? "✅ Solved" : `+${q.points} pts`}</span>
-            ${multi ? `<span class="stage-tag">Multi-answer</span>` : ""}
+            ${slotCount > 1 ? `<span class="stage-tag">${slotCount} answers</span>` : ""}
           </div>
           <strong>${escapeHtml(q.title)}</strong>
-          <form class="student-answer-row" onsubmit="handleStudentSubmitAnswer(event, '${q.id}')">
-            <input type="text" id="ans-input-${q.id}" placeholder="${placeholder}" required />
-            <button type="submit" class="btn btn-primary btn-sm">Check</button>
+          <form class="student-answer-form" onsubmit="handleStudentSubmitAnswer(event, '${q.id}')">
+            ${inputsHtml}
+            <button type="submit" class="btn btn-primary btn-sm"
+                    ${isSolved ? "disabled" : ""}>
+              ${isSolved ? "✅ Solved" : "Check"}
+            </button>
           </form>
-          ${multi ? `<small class="muted">⚠️ Multiple answers needed — separate with commas.</small>` : ""}
           <div id="feedback-${q.id}" class="attempt-feedback hidden"></div>
         </div>
       </div>`;
@@ -779,15 +796,16 @@ function renderStudentTopicQuestions() {
 
 window.handleStudentSubmitAnswer = async function (e, questionId) {
   e.preventDefault();
-  const input = document.getElementById(`ans-input-${questionId}`);
   const feedback = document.getElementById(`feedback-${questionId}`);
-  const raw = input.value.trim();
-  if (!raw) return;
+  const form = e.target;
+  const inputs = Array.from(form.querySelectorAll("input.answer-slot"));
+  const answers = inputs.map(i => i.value.trim());
 
-  const q = allQuestions.find(x => x.id === questionId);
-  const answers = q && q.require_multi_answers
-    ? raw.split(",").map(s => s.trim()).filter(Boolean)
-    : [raw];
+  // Every visible input must be filled
+  if (answers.some(a => a.length === 0)) {
+    return showToast("Please fill in every answer box.", "error");
+  }
+
   const payload = JSON.stringify(answers);
 
   const { data, error } = await supabaseClient.rpc("submit_answer", {
@@ -805,6 +823,10 @@ window.handleStudentSubmitAnswer = async function (e, questionId) {
     document.getElementById("student-my-solved").textContent = data.questions_solved;
     document.getElementById("header-score-badge").textContent = `${data.new_score} pts`;
     document.getElementById(`q-card-${questionId}`).classList.add("solved");
+    form.querySelectorAll("input").forEach(i => i.disabled = true);
+    const btn = form.querySelector("button");
+    btn.textContent = "✅ Solved";
+    btn.disabled = true;
     feedback.classList.add("ok");
     feedback.textContent = data.points_awarded > 0
       ? `🎉 Correct! +${data.points_awarded} points!`
@@ -813,7 +835,7 @@ window.handleStudentSubmitAnswer = async function (e, questionId) {
     renderStudentTopicsGrid();
   } else {
     feedback.classList.add("bad");
-    feedback.textContent = `❌ Not quite right — try again!`;
+    feedback.textContent = `❌ Not quite right — check each answer and try again!`;
   }
 };
 
