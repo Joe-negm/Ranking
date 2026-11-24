@@ -1028,3 +1028,28 @@ h1, h2, h3, h4, .logo-title {
   align-self: flex-start;
   margin-top: 0.4rem;
 }
+
+
+.inbox-contact.unread {
+  background: #fef3c7;          /* amber tint */
+  border-color: #f59e0b;
+  color: #78350f;
+  font-weight: 800;
+}
+.inbox-contact.unread.active {
+  background: var(--blue);
+  color: #fff;
+  border-color: var(--blue);
+}
+.contact-unread-dot {
+  display: inline-block;
+  margin-left: 6px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 1px 7px;
+  border-radius: 999px;
+  min-width: 18px;
+  text-align: center;
+}
