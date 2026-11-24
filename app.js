@@ -930,13 +930,32 @@ async function openInboxWith(contactId) {
 }
 async function renderContacts() {
   const list = await fetchContacts();
+
+  // Get per-sender unread counts
+  let unreadMap = new Map();
+  try {
+    const { data: unreadRows } = await supabaseClient.rpc("unread_per_sender");
+    (unreadRows || []).forEach(r => unreadMap.set(r.sender_id, Number(r.unread_count) || 0));
+  } catch { /* ignore */ }
+
   const c = document.getElementById("inbox-contact-list");
-  if (!list.length) { c.innerHTML = `<p class="muted" style="font-size:0.85rem;">No contacts.</p>`; return; }
-  c.innerHTML = list.map(u => `
-    <button class="inbox-contact ${u.id === activeConversationId ? "active" : ""}"
-      onclick="selectContact('${u.id}')">
-      ${escapeHtml(u.full_name)}${u.role === "owner" ? " 👑" : u.role === "teacher" ? " 👩‍🏫" : ""}
-    </button>`).join("");
+  if (!list.length) {
+    c.innerHTML = `<p class="muted" style="font-size:0.85rem;">No contacts.</p>`;
+    return;
+  }
+  c.innerHTML = list.map(u => {
+    const isActive = u.id === activeConversationId;
+    const unread = unreadMap.get(u.id) || 0;
+    const badge = unread > 0
+      ? `<span class="contact-unread-dot">${unread}</span>`
+      : "";
+    const roleIcon = u.role === "owner" ? " 👑" : u.role === "teacher" ? " 👩‍🏫" : "";
+    return `
+      <button class="inbox-contact ${isActive ? "active" : ""} ${unread > 0 && !isActive ? "unread" : ""}"
+        onclick="selectContact('${u.id}')">
+        ${escapeHtml(u.full_name)}${roleIcon}${badge}
+      </button>`;
+  }).join("");
 }
 window.selectContact = async (id) => {
   activeConversationId = id;
