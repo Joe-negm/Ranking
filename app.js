@@ -778,6 +778,10 @@ window.handleStudentSubmitAnswer = async (e, questionId) => {
     hintBox.innerHTML = `<span class="hint-loading">🤖 Thinking…</span>`;
     const { data: sessionData } = await supabaseClient.auth.getSession();
     const token = sessionData?.session?.access_token;
+    if (!token) {
+  hintBox.textContent = "Please sign out and sign back in to get hints.";
+  return;
+}
     const cfg = getSupabaseConfig();
     try {
       const resp = await fetch(`${cfg.url}/functions/v1/ai-hint`, {
