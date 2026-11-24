@@ -993,6 +993,37 @@ h1, h2, h3, h4, .logo-title {
   color: var(--navy);
   margin-top: 0.25rem;
 }
+
+/* AI hint bubble */
+.ai-hint-bubble {
+  background: #eef2ff; border: 1.5px solid #c7d2fe;
+  color: #1e3a8a; padding: 0.65rem 0.85rem;
+  border-radius: 10px; font-size: 0.88rem;
+  margin-top: 0.6rem; line-height: 1.45;
+  display: flex; gap: 0.5rem; align-items: flex-start;
+}
+.ai-hint-bubble::before { content: "🤖"; font-size: 1.05rem; flex: 0 0 auto; }
+.hint-loading { font-style: italic; color: var(--muted); }
+
+/* Inbox */
+.inbox-contact {
+  display: inline-block; padding: 4px 10px; margin: 3px 4px 3px 0;
+  background: #fff; border: 1.5px solid var(--border);
+  border-radius: 999px; cursor: pointer; font-size: 0.85rem;
+}
+.inbox-contact.active { background: var(--blue); color: #fff; border-color: var(--blue); }
+.msg-row { display: flex; margin: 4px 0; }
+.msg-row.me { justify-content: flex-end; }
+.msg-bubble {
+  max-width: 78%; padding: 6px 10px; border-radius: 12px;
+  font-size: 0.88rem; line-height: 1.35;
+}
+.msg-row.me .msg-bubble { background: var(--blue); color: #fff; }
+.msg-row.them .msg-bubble { background: #fff; border: 1px solid var(--border); }
+.msg-meta { font-size: 0.7rem; opacity: 0.7; margin-top: 2px; }
+
+/* Hint log table */
+.hint-cell { max-width: 380px; font-size: 0.82rem; line-height: 1.35; }
 .student-answer-form button {
   align-self: flex-start;
   margin-top: 0.4rem;
