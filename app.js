@@ -1,11 +1,10 @@
 // ============================================================================
-// Cambridge Math Arena — Frontend
-// Slot-based grading: one input per required answer, each with its own
-// equivalence list. Teacher can delete students.
+// Cambridge Math Arena — full frontend v3
+// Adds: AI hints (server-side), DMs, owner hint log, teacher topic overview
 // ============================================================================
 
-const DEFAULT_SUPABASE_URL = "https://yktszhisgtrzggorhzwo.supabase.co";
-const DEFAULT_SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InlrdHN6aGlzZ3Ryemdnb3JoendvIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTQ4MjYzOTAsImV4cCI6MjExMDQwMjM5MH0.jKaihUD8OoFyQe7hEF8VPytPQg6PfZx0ir6rNJqEwbE";
+const DEFAULT_SUPABASE_URL = "";
+const DEFAULT_SUPABASE_ANON_KEY = "";
 const STUDENT_EMAIL_DOMAIN = "student.cambridgemath.local";
 
 let supabaseClient = null;
@@ -16,20 +15,19 @@ let currentProfile = null;
 let allTopics = [];
 let allQuestions = [];
 let mySolvedQuestionIds = new Set();
-let pendingAnswerGroups = [];   // [{ values: [...] }] — one per required slot
+let pendingAnswerGroups = [];
 let activeTopicId = null;
 let teacherStudentsCache = [];
 let globalStudentsCache = [];
+let activeConversationId = null;
+let unreadPollTimer = null;
 
-// ----------------------------------------------------------------------------
-// Supabase bootstrap
 // ----------------------------------------------------------------------------
 function getSupabaseConfig() {
   const url = DEFAULT_SUPABASE_URL || localStorage.getItem("cm_supabase_url") || "";
   const key = DEFAULT_SUPABASE_ANON_KEY || localStorage.getItem("cm_supabase_key") || "";
   return { url: url.trim(), key: key.trim() };
 }
-
 function initSupabase() {
   const { url, key } = getSupabaseConfig();
   const banner = document.getElementById("config-banner");
@@ -49,46 +47,40 @@ document.addEventListener("DOMContentLoaded", async () => {
 });
 
 // ----------------------------------------------------------------------------
-// Helpers
-// ----------------------------------------------------------------------------
 function showToast(message, type = "info") {
-  const container = document.getElementById("toast-container");
+  const c = document.getElementById("toast-container");
   const el = document.createElement("div");
   el.className = `toast ${type}`;
   el.textContent = message;
-  container.appendChild(el);
+  c.appendChild(el);
   setTimeout(() => el.remove(), 4000);
 }
-
-function escapeHtml(str) {
-  return String(str ?? "")
-    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+function escapeHtml(s) {
+  return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
-
-function usernameToEmail(username) {
-  const clean = username.trim().toLowerCase().replace(/[^a-z0-9_.]/g, "");
+function usernameToEmail(u) {
+  const clean = u.trim().toLowerCase().replace(/[^a-z0-9_.]/g, "");
   return { clean, email: `${clean}@${STUDENT_EMAIL_DOMAIN}` };
 }
-
-function isTeacherSubscriptionActive(profile) {
-  if (!profile) return false;
-  if (profile.subscription_waived) return true;
-  if (!profile.trial_ends_at) return false;
-  return new Date(profile.trial_ends_at) > new Date();
+function isTeacherSubscriptionActive(p) {
+  if (!p) return false;
+  if (p.subscription_waived) return true;
+  if (!p.trial_ends_at) return false;
+  return new Date(p.trial_ends_at) > new Date();
 }
-
-function daysLeftInTrial(trialEndsAt) {
-  if (!trialEndsAt) return 0;
-  const diff = new Date(trialEndsAt) - new Date();
-  return Math.max(0, Math.ceil(diff / (1000 * 60 * 60 * 24)));
+function daysLeftInTrial(t) {
+  if (!t) return 0;
+  return Math.max(0, Math.ceil((new Date(t) - new Date()) / 86400000));
 }
-
-function formatRankMedal(rank) {
-  if (rank === 1) return "🥇 #1";
-  if (rank === 2) return "🥈 #2";
-  if (rank === 3) return "🥉 #3";
-  return `#${rank}`;
+function formatRankMedal(r) {
+  if (r === 1) return "🥇 #1";
+  if (r === 2) return "🥈 #2";
+  if (r === 3) return "🥉 #3";
+  return `#${r}`;
+}
+function fmtDate(iso) {
+  return new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 // ----------------------------------------------------------------------------
@@ -109,13 +101,12 @@ async function checkSessionAndBoot() {
   currentProfile = profile;
   await bootRoleWorkspace();
 }
-
 function showAuthView() {
   currentUser = null; currentProfile = null;
+  if (unreadPollTimer) clearInterval(unreadPollTimer);
   document.getElementById("auth-section").classList.remove("hidden");
   document.getElementById("app-section").classList.add("hidden");
 }
-
 async function bootRoleWorkspace() {
   document.getElementById("auth-section").classList.add("hidden");
   document.getElementById("app-section").classList.remove("hidden");
@@ -139,11 +130,14 @@ async function bootRoleWorkspace() {
     tabs = [
       { id: "owner-questions", label: "🖼️ Questions & Topics" },
       { id: "owner-teachers", label: "👩‍🏫 Teachers & Waivers" },
+      { id: "owner-hints", label: "🤖 AI Hint Log" },
       { id: "global-dashboard", label: "🌍 All Students Dashboard" },
     ];
   } else if (currentProfile.role === "teacher") {
     tabs = [
-      { id: "teacher-class", label: "🏫 Class Dashboard & Students" },
+      { id: "teacher-class", label: "🏫 Class Dashboard" },
+      { id: "teacher-topics", label: "📚 Topics Overview" },
+      { id: "teacher-hints", label: "🤖 AI Hints" },
       { id: "global-dashboard", label: "🌍 All Students Dashboard" },
     ];
   } else {
@@ -153,34 +147,36 @@ async function bootRoleWorkspace() {
       { id: "global-dashboard", label: "🌍 All Students Dashboard" },
     ];
   }
-
   nav.innerHTML = tabs.map((t, i) =>
     `<button class="nav-btn ${i === 0 ? "active" : ""}" data-view="${t.id}">${t.label}</button>`
   ).join("");
-
-  nav.querySelectorAll(".nav-btn").forEach(btn => {
-    btn.addEventListener("click", () => switchWorkspaceView(btn.dataset.view));
-  });
+  nav.querySelectorAll(".nav-btn").forEach(btn =>
+    btn.addEventListener("click", () => switchWorkspaceView(btn.dataset.view)));
 
   await switchWorkspaceView(tabs[0].id);
+  refreshUnreadBadge();
+  if (unreadPollTimer) clearInterval(unreadPollTimer);
+  unreadPollTimer = setInterval(refreshUnreadBadge, 30000);
 }
-
 async function switchWorkspaceView(viewId) {
   document.querySelectorAll(".nav-btn").forEach(b =>
     b.classList.toggle("active", b.dataset.view === viewId));
-  document.querySelectorAll(".view-panel").forEach(panel =>
-    panel.classList.toggle("hidden", panel.id !== `view-${viewId}`));
+  document.querySelectorAll(".view-panel").forEach(p =>
+    p.classList.toggle("hidden", p.id !== `view-${viewId}`));
 
   if (viewId === "owner-questions") await loadOwnerQuestionsView();
   if (viewId === "owner-teachers") await loadOwnerTeachersView();
+  if (viewId === "owner-hints") await loadHintsLog("owner");
   if (viewId === "teacher-class") await loadTeacherClassView();
+  if (viewId === "teacher-topics") await loadTeacherTopicsView();
+  if (viewId === "teacher-hints") await loadHintsLog("teacher");
   if (viewId === "student-practice") await loadStudentPracticeView();
   if (viewId === "class-dashboard") await loadStudentClassDashboard();
   if (viewId === "global-dashboard") await loadGlobalDashboard();
 }
 
 // ----------------------------------------------------------------------------
-// Bind static events
+// Events
 // ----------------------------------------------------------------------------
 function bindStaticEvents() {
   document.querySelectorAll(".auth-tab").forEach(tab => {
@@ -191,7 +187,6 @@ function bindStaticEvents() {
       document.getElementById(`${tab.dataset.authTab}-form`).classList.add("active");
     });
   });
-
   const openConfig = () => {
     const { url, key } = getSupabaseConfig();
     document.getElementById("supabase-url-input").value = url;
@@ -205,61 +200,50 @@ function bindStaticEvents() {
 
   document.getElementById("config-form").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const url = document.getElementById("supabase-url-input").value.trim();
-    const key = document.getElementById("supabase-key-input").value.trim();
-    localStorage.setItem("cm_supabase_url", url);
-    localStorage.setItem("cm_supabase_key", key);
+    localStorage.setItem("cm_supabase_url", document.getElementById("supabase-url-input").value.trim());
+    localStorage.setItem("cm_supabase_key", document.getElementById("supabase-key-input").value.trim());
     document.getElementById("config-modal").classList.add("hidden");
-    if (initSupabase()) {
-      showToast("Supabase connected!", "success");
-      await checkSessionAndBoot();
-    }
+    if (initSupabase()) { showToast("Supabase connected!", "success"); await checkSessionAndBoot(); }
   });
-
   document.getElementById("student-login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!supabaseClient) return showToast("Connect Supabase first.", "error");
-    const rawUsername = document.getElementById("student-username").value;
-    const password = document.getElementById("student-password").value;
-    const { clean, email } = usernameToEmail(rawUsername);
+    const { clean, email } = usernameToEmail(document.getElementById("student-username").value);
     if (!clean) return showToast("Enter a valid username.", "error");
-    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email, password: document.getElementById("student-password").value,
+    });
     if (error) return showToast("Invalid username or password.", "error");
     showToast("Welcome back!", "success");
     await checkSessionAndBoot();
   });
-
   document.getElementById("staff-login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!supabaseClient) return showToast("Connect Supabase first.", "error");
-    const email = document.getElementById("staff-email").value.trim();
-    const password = document.getElementById("staff-password").value;
-    const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
+    const { error } = await supabaseClient.auth.signInWithPassword({
+      email: document.getElementById("staff-email").value.trim(),
+      password: document.getElementById("staff-password").value,
+    });
     if (error) return showToast(error.message, "error");
     showToast("Signed in successfully!", "success");
     await checkSessionAndBoot();
   });
-
   document.getElementById("teacher-signup-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     if (!supabaseClient) return showToast("Connect Supabase first.", "error");
-    const fullName = document.getElementById("teacher-name").value.trim();
-    const schoolName = document.getElementById("teacher-school").value.trim();
-    const email = document.getElementById("teacher-email").value.trim();
-    const password = document.getElementById("teacher-password").value;
     const { data, error } = await supabaseClient.auth.signUp({
-      email, password,
-      options: { data: { role: "teacher", full_name: fullName, school_name: schoolName } },
+      email: document.getElementById("teacher-email").value.trim(),
+      password: document.getElementById("teacher-password").value,
+      options: { data: {
+        role: "teacher",
+        full_name: document.getElementById("teacher-name").value.trim(),
+        school_name: document.getElementById("teacher-school").value.trim(),
+      } },
     });
     if (error) return showToast(error.message, "error");
-    if (data.session) {
-      showToast("Teacher account created! Trial active.", "success");
-      await checkSessionAndBoot();
-    } else {
-      showToast("Account created! Check your email or disable confirmation in Supabase.", "info");
-    }
+    if (data.session) { showToast("Account created!", "success"); await checkSessionAndBoot(); }
+    else showToast("Account created! Confirm email or disable confirmation.", "info");
   });
-
   document.getElementById("logout-btn").addEventListener("click", async () => {
     await supabaseClient.auth.signOut();
     showToast("Signed out.", "info");
@@ -273,13 +257,11 @@ function bindStaticEvents() {
     document.getElementById("q-image-preview").src = URL.createObjectURL(file);
     wrap.classList.remove("hidden");
   });
-
-  // Add answer group (one group = one required answer slot)
   document.getElementById("add-answer-group-btn").addEventListener("click", () => {
     const raw = document.getElementById("new-group-values").value.trim();
     if (!raw) return;
     const values = raw.split(",").map(s => s.trim()).filter(Boolean);
-    if (values.length === 0) return;
+    if (!values.length) return;
     pendingAnswerGroups.push({ values });
     document.getElementById("new-group-values").value = "";
     renderAnswerGroups();
@@ -291,7 +273,6 @@ function bindStaticEvents() {
   document.getElementById("add-topic-form").addEventListener("submit", handleOwnerCreateTopic);
   document.getElementById("add-question-form").addEventListener("submit", handleOwnerPublishQuestion);
   document.getElementById("owner-questions-filter-topic").addEventListener("change", renderOwnerQuestions);
-
   document.getElementById("create-student-form").addEventListener("submit", handleTeacherCreateStudent);
   document.getElementById("teacher-class-search").addEventListener("input", renderTeacherClassTable);
 
@@ -301,13 +282,19 @@ function bindStaticEvents() {
     document.getElementById("student-topics-grid").classList.remove("hidden");
   });
   document.getElementById("student-q-filter").addEventListener("change", renderStudentTopicQuestions);
-
   document.getElementById("global-search").addEventListener("input", renderGlobalLeaderboard);
 
   document.getElementById("close-image-modal").addEventListener("click", () =>
     document.getElementById("image-modal").classList.add("hidden"));
   document.querySelector("#image-modal .modal-backdrop").addEventListener("click", () =>
     document.getElementById("image-modal").classList.add("hidden"));
+
+  document.getElementById("inbox-btn").addEventListener("click", openInbox);
+  document.getElementById("close-inbox-modal").addEventListener("click", () =>
+    document.getElementById("inbox-modal").classList.add("hidden"));
+  document.querySelector("#inbox-modal .modal-backdrop").addEventListener("click", () =>
+    document.getElementById("inbox-modal").classList.add("hidden"));
+  document.getElementById("inbox-send-form").addEventListener("submit", handleInboxSend);
 
   renderAnswerGroups();
 }
@@ -319,12 +306,12 @@ function openImageZoom(url) {
 window.openImageZoom = openImageZoom;
 
 // ----------------------------------------------------------------------------
-// Answer group builder UI (owner side)
+// Answer groups
 // ----------------------------------------------------------------------------
 function renderAnswerGroups() {
   const c = document.getElementById("answer-groups-container");
   if (!c) return;
-  if (pendingAnswerGroups.length === 0) {
+  if (!pendingAnswerGroups.length) {
     c.innerHTML = `<p class="muted" style="font-size:0.85rem;margin:0 0 4px;">No answer groups yet.</p>`;
     return;
   }
@@ -336,10 +323,7 @@ function renderAnswerGroups() {
         onclick="removeAnswerGroup(${i})" style="margin-left:auto;">×</button>
     </div>`).join("");
 }
-window.removeAnswerGroup = function (i) {
-  pendingAnswerGroups.splice(i, 1);
-  renderAnswerGroups();
-};
+window.removeAnswerGroup = (i) => { pendingAnswerGroups.splice(i, 1); renderAnswerGroups(); };
 
 // ----------------------------------------------------------------------------
 // Owner: Questions
@@ -352,49 +336,41 @@ async function loadOwnerQuestionsView() {
   ]);
   allTopics = topicsRes.data || [];
   const answerMap = new Map((answersRes.data || []).map(a => [a.question_id, a.answer_groups || []]));
-  allQuestions = (questionsRes.data || []).map(q => ({
-    ...q,
-    answer_groups: answerMap.get(q.id) || [],
-  }));
+  allQuestions = (questionsRes.data || []).map(q => ({ ...q, answer_groups: answerMap.get(q.id) || [] }));
 
-  const qTopicSelect = document.getElementById("q-topic");
-  const filterSelect = document.getElementById("owner-questions-filter-topic");
-  qTopicSelect.innerHTML = allTopics.map(t =>
+  document.getElementById("q-topic").innerHTML = allTopics.map(t =>
     `<option value="${t.id}">${escapeHtml(t.icon)} ${escapeHtml(t.name)}</option>`).join("");
-  filterSelect.innerHTML =
+  document.getElementById("owner-questions-filter-topic").innerHTML =
     `<option value="all">All Topics</option>` +
     allTopics.map(t => `<option value="${t.id}">${escapeHtml(t.icon)} ${escapeHtml(t.name)}</option>`).join("");
 
   document.getElementById("owner-topics-list").innerHTML = allTopics.map(t => `
     <div class="topic-mini-item">
-      <div>
-        <strong>${escapeHtml(t.icon)} ${escapeHtml(t.name)}</strong>
-        <div class="muted">${escapeHtml(t.stage_group)}</div>
-      </div>
+      <div><strong>${escapeHtml(t.icon)} ${escapeHtml(t.name)}</strong>
+      <div class="muted">${escapeHtml(t.stage_group)}</div></div>
       <button class="btn btn-danger btn-sm" onclick="deleteTopic('${t.id}')">Delete</button>
     </div>`).join("");
 
   renderOwnerQuestions();
 }
-
 async function handleOwnerCreateTopic(e) {
   e.preventDefault();
-  const name = document.getElementById("topic-name").value.trim();
-  const icon = document.getElementById("topic-icon").value.trim() || "📐";
-  const stage_group = document.getElementById("topic-stage").value.trim();
-  const description = document.getElementById("topic-desc").value.trim();
-  const { error } = await supabaseClient.from("topics").insert({ name, icon, stage_group, description });
+  const { error } = await supabaseClient.from("topics").insert({
+    name: document.getElementById("topic-name").value.trim(),
+    icon: document.getElementById("topic-icon").value.trim() || "📐",
+    stage_group: document.getElementById("topic-stage").value.trim(),
+    description: document.getElementById("topic-desc").value.trim(),
+  });
   if (error) return showToast(error.message, "error");
-  showToast(`Topic "${name}" created!`, "success");
+  showToast("Topic created!", "success");
   e.target.reset();
   document.getElementById("topic-icon").value = "📏";
   document.getElementById("topic-stage").value = "Primary & Lower Secondary";
   await loadOwnerQuestionsView();
 }
-
-window.deleteTopic = async function (topicId) {
-  if (!confirm("Delete this topic and all its questions?")) return;
-  const { error } = await supabaseClient.from("topics").delete().eq("id", topicId);
+window.deleteTopic = async (id) => {
+  if (!confirm("Delete topic and all its questions?")) return;
+  const { error } = await supabaseClient.from("topics").delete().eq("id", id);
   if (error) return showToast(error.message, "error");
   showToast("Topic deleted.", "info");
   await loadOwnerQuestionsView();
@@ -402,23 +378,19 @@ window.deleteTopic = async function (topicId) {
 
 async function handleOwnerPublishQuestion(e) {
   e.preventDefault();
-  if (pendingAnswerGroups.length === 0)
-    return showToast("Add at least one answer group.", "error");
+  if (!pendingAnswerGroups.length) return showToast("Add at least one answer group.", "error");
   const file = document.getElementById("q-image-file").files[0];
   if (!file) return showToast("Choose a question image.", "error");
-
   const btn = document.getElementById("publish-question-btn");
-  btn.disabled = true; btn.textContent = "Uploading Image...";
-
+  btn.disabled = true; btn.textContent = "Uploading...";
   try {
     const ext = file.name.split(".").pop() || "png";
-    const filePath = `questions/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-    const { error: upErr } = await supabaseClient.storage
-      .from("question-images").upload(filePath, file, { cacheControl: "3600", upsert: false });
+    const path = `questions/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error: upErr } = await supabaseClient.storage.from("question-images")
+      .upload(path, file, { cacheControl: "3600", upsert: false });
     if (upErr) throw upErr;
-    const { data: urlData } = supabaseClient.storage.from("question-images").getPublicUrl(filePath);
-
-    const { error: rpcError } = await supabaseClient.rpc("owner_create_question", {
+    const { data: urlData } = supabaseClient.storage.from("question-images").getPublicUrl(path);
+    const { error: rpcErr } = await supabaseClient.rpc("owner_create_question", {
       p_topic_id: document.getElementById("q-topic").value,
       p_title: document.getElementById("q-title").value.trim(),
       p_stage: document.getElementById("q-stage").value,
@@ -427,8 +399,7 @@ async function handleOwnerPublishQuestion(e) {
       p_answer_groups: pendingAnswerGroups,
       p_require_multi: document.getElementById("q-require-multi").checked,
     });
-    if (rpcError) throw rpcError;
-
+    if (rpcErr) throw rpcErr;
     showToast("Question published!", "success");
     e.target.reset();
     pendingAnswerGroups = [];
@@ -436,24 +407,20 @@ async function handleOwnerPublishQuestion(e) {
     document.getElementById("q-image-preview-wrap").classList.add("hidden");
     await loadOwnerQuestionsView();
   } catch (err) {
-    showToast(err.message || "Failed to publish question.", "error");
+    showToast(err.message || "Publish failed.", "error");
   } finally {
     btn.disabled = false; btn.textContent = "Publish Question";
   }
 }
-
 function renderOwnerQuestions() {
-  const filterId = document.getElementById("owner-questions-filter-topic").value;
-  const topicMap = new Map(allTopics.map(t => [t.id, t]));
-  const filtered = filterId === "all" ? allQuestions : allQuestions.filter(q => q.topic_id === filterId);
-  const container = document.getElementById("owner-questions-list");
-  if (filtered.length === 0) {
-    container.innerHTML = `<p class="muted">No questions yet.</p>`;
-    return;
-  }
-  container.innerHTML = filtered.map(q => {
-    const topic = topicMap.get(q.topic_id);
-    const groupsHtml = (q.answer_groups || []).map((g, i) => `
+  const fid = document.getElementById("owner-questions-filter-topic").value;
+  const map = new Map(allTopics.map(t => [t.id, t]));
+  const filtered = fid === "all" ? allQuestions : allQuestions.filter(q => q.topic_id === fid);
+  const c = document.getElementById("owner-questions-list");
+  if (!filtered.length) { c.innerHTML = `<p class="muted">No questions yet.</p>`; return; }
+  c.innerHTML = filtered.map(q => {
+    const topic = map.get(q.topic_id);
+    const groups = (q.answer_groups || []).map((g, i) => `
       <div class="group-preview-row">
         <span class="required-badge">SLOT ${i + 1}</span>
         ${(g.values || []).map(v => `<span class="answer-chip">${escapeHtml(v)}</span>`).join(" ")}
@@ -471,23 +438,22 @@ function renderOwnerQuestions() {
           </div>
           <strong>${escapeHtml(q.title)}</strong>
           <small class="muted">${topic ? `${escapeHtml(topic.icon)} ${escapeHtml(topic.name)}` : ""}</small>
-          <div class="group-preview">${groupsHtml}</div>
-          <button class="btn btn-danger btn-sm mt-lg" onclick="deleteQuestion('${q.id}')">Delete Question</button>
+          <div class="group-preview">${groups}</div>
+          <button class="btn btn-danger btn-sm mt-lg" onclick="deleteQuestion('${q.id}')">Delete</button>
         </div>
       </div>`;
   }).join("");
 }
-
-window.deleteQuestion = async function (questionId) {
-  if (!confirm("Delete this question?")) return;
-  const { error } = await supabaseClient.from("questions").delete().eq("id", questionId);
+window.deleteQuestion = async (id) => {
+  if (!confirm("Delete question?")) return;
+  const { error } = await supabaseClient.from("questions").delete().eq("id", id);
   if (error) return showToast(error.message, "error");
   showToast("Question deleted.", "info");
   await loadOwnerQuestionsView();
 };
 
 // ----------------------------------------------------------------------------
-// Owner: Teachers & Waivers
+// Owner: Teachers
 // ----------------------------------------------------------------------------
 async function loadOwnerTeachersView() {
   const { data: profiles, error } = await supabaseClient
@@ -504,53 +470,60 @@ async function loadOwnerTeachersView() {
   document.getElementById("owner-stat-students").textContent = students.length;
 
   const tbody = document.getElementById("owner-teachers-tbody");
-  if (teachers.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="6" class="muted">No teachers yet.</td></tr>`;
-    return;
-  }
+  if (!teachers.length) { tbody.innerHTML = `<tr><td colspan="6" class="muted">No teachers yet.</td></tr>`; return; }
   tbody.innerHTML = teachers.map(t => {
     const days = daysLeftInTrial(t.trial_ends_at);
-    let badge = t.subscription_waived
-      ? `<span class="badge badge-success">Fee Waived</span>`
-      : days > 0
-        ? `<span class="badge badge-warning">Trial (${days}d left)</span>`
-        : `<span class="badge badge-danger">Trial Expired</span>`;
-    const trialDate = t.trial_ends_at ? new Date(t.trial_ends_at).toLocaleDateString() : "—";
+    const badge = t.subscription_waived
+      ? `<span class="badge badge-success">Waived</span>`
+      : days > 0 ? `<span class="badge badge-warning">Trial ${days}d</span>`
+      : `<span class="badge badge-danger">Expired</span>`;
     return `
       <tr>
         <td><strong>${escapeHtml(t.full_name)}</strong><br/><small class="muted">${escapeHtml(t.email || "")}</small></td>
         <td>${escapeHtml(t.school_name || "—")}</td>
         <td>${counts[t.id] || 0}</td>
-        <td>${trialDate}</td>
+        <td>${t.trial_ends_at ? new Date(t.trial_ends_at).toLocaleDateString() : "—"}</td>
         <td>${badge}</td>
-        <td>
-          <button class="btn btn-sm ${t.subscription_waived ? "btn-outline" : "btn-amber"}"
-            onclick="toggleWaiveSubscription('${t.id}', ${!t.subscription_waived})">
-            ${t.subscription_waived ? "Revoke Waiver" : "Waive Fee"}
-          </button>
-        </td>
+        <td><button class="btn btn-sm ${t.subscription_waived ? "btn-outline" : "btn-amber"}"
+          onclick="toggleWaiveSubscription('${t.id}', ${!t.subscription_waived})">
+          ${t.subscription_waived ? "Revoke" : "Waive Fee"}</button></td>
       </tr>`;
   }).join("");
 }
-
-window.toggleWaiveSubscription = async function (teacherId, waive) {
-  const { error } = await supabaseClient.from("profiles")
-    .update({ subscription_waived: waive }).eq("id", teacherId);
+window.toggleWaiveSubscription = async (id, waive) => {
+  const { error } = await supabaseClient.from("profiles").update({ subscription_waived: waive }).eq("id", id);
   if (error) return showToast(error.message, "error");
   showToast(waive ? "Fee waived!" : "Waiver removed.", "success");
   await loadOwnerTeachersView();
 };
 
 // ----------------------------------------------------------------------------
-// Teacher: Class & Students
+// Hint log
+// ----------------------------------------------------------------------------
+async function loadHintsLog(role) {
+  const tbodyId = role === "owner" ? "owner-hints-tbody" : "teacher-hints-tbody";
+  const tbody = document.getElementById(tbodyId);
+  const { data, error } = await supabaseClient.rpc("teacher_hint_log", { p_limit: 200 });
+  if (error) { tbody.innerHTML = `<tr><td colspan="5" class="muted">${escapeHtml(error.message)}</td></tr>`; return; }
+  if (!data || !data.length) { tbody.innerHTML = `<tr><td colspan="5" class="muted">No AI hints yet.</td></tr>`; return; }
+  tbody.innerHTML = data.map(h => `
+    <tr>
+      <td>${fmtDate(h.created_at)}</td>
+      <td>${escapeHtml(h.student_name)}</td>
+      <td>${escapeHtml(h.question_title)}</td>
+      <td><code>${escapeHtml(h.submitted_answer)}</code></td>
+      <td class="hint-cell">${escapeHtml(h.hint_text)}</td>
+    </tr>`).join("");
+}
+
+// ----------------------------------------------------------------------------
+// Teacher: Class
 // ----------------------------------------------------------------------------
 async function loadTeacherClassView() {
-  const { data: fresh } = await supabaseClient.from("profiles")
-    .select("*").eq("id", currentProfile.id).single();
+  const { data: fresh } = await supabaseClient.from("profiles").select("*").eq("id", currentProfile.id).single();
   if (fresh) currentProfile = fresh;
-
-  const schoolInput = document.getElementById("new-student-school");
-  if (!schoolInput.value) schoolInput.value = currentProfile.school_name || "";
+  const school = document.getElementById("new-student-school");
+  if (!school.value) school.value = currentProfile.school_name || "";
 
   const banner = document.getElementById("teacher-trial-banner");
   const active = isTeacherSubscriptionActive(currentProfile);
@@ -560,7 +533,7 @@ async function loadTeacherClassView() {
     banner.innerHTML = `<span>✅ Subscription Fee Waived — Full Lifetime Access</span>`;
   } else if (active) {
     banner.className = "trial-banner trial-active";
-    banner.innerHTML = `<span>🎁 Trial Active: <strong>${days} day(s)</strong> left</span>`;
+    banner.innerHTML = `<span>🎁 Trial: <strong>${days} day(s)</strong> left</span>`;
   } else {
     banner.className = "trial-banner trial-expired";
     banner.innerHTML = `<span>⚠️ Trial expired. Ask Owner to waive your fee.</span>`;
@@ -568,38 +541,27 @@ async function loadTeacherClassView() {
   document.getElementById("create-student-btn").disabled = !active;
 
   const { data: students, error } = await supabaseClient
-    .from("profiles").select("*").eq("role", "student")
-    .eq("teacher_id", currentProfile.id)
-    .order("score", { ascending: false })
-    .order("questions_solved", { ascending: false });
+    .from("profiles").select("*").eq("role", "student").eq("teacher_id", currentProfile.id)
+    .order("score", { ascending: false });
   if (error) return showToast(error.message, "error");
-
   teacherStudentsCache = students || [];
   const count = teacherStudentsCache.length;
   const total = teacherStudentsCache.reduce((a, s) => a + (s.score || 0), 0);
-  const top = count > 0 ? teacherStudentsCache[0].score : 0;
   document.getElementById("teacher-stat-count").textContent = count;
   document.getElementById("teacher-stat-avg").textContent = count ? Math.round(total / count) : 0;
-  document.getElementById("teacher-stat-top").textContent = top;
-
+  document.getElementById("teacher-stat-top").textContent = count ? teacherStudentsCache[0].score : 0;
   renderTeacherClassTable();
 }
-
 function renderTeacherClassTable() {
   const q = document.getElementById("teacher-class-search").value.trim().toLowerCase();
   const tbody = document.getElementById("teacher-class-tbody");
   const ranked = teacherStudentsCache.map((s, i) => ({ ...s, rank: i + 1 }));
   const filtered = q
-    ? ranked.filter(s =>
-        s.full_name.toLowerCase().includes(q) ||
-        (s.username || "").toLowerCase().includes(q) ||
-        (s.school_name || "").toLowerCase().includes(q))
+    ? ranked.filter(s => s.full_name.toLowerCase().includes(q)
+      || (s.username || "").toLowerCase().includes(q)
+      || (s.school_name || "").toLowerCase().includes(q))
     : ranked;
-
-  if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="7" class="muted">No students found.</td></tr>`;
-    return;
-  }
+  if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="7" class="muted">No students.</td></tr>`; return; }
   tbody.innerHTML = filtered.map(s => `
     <tr>
       <td><strong>${formatRankMedal(s.rank)}</strong></td>
@@ -609,208 +571,185 @@ function renderTeacherClassTable() {
       <td>${s.questions_solved}</td>
       <td><strong>${s.score} pts</strong></td>
       <td class="table-actions">
+        <button class="btn btn-outline btn-sm" onclick="openInboxWith('${s.id}')">💬</button>
         <button class="btn btn-danger btn-sm"
-          onclick="deleteStudent('${s.id}', '${escapeHtml(s.full_name).replace(/'/g, "\\'")}')">
-          Delete
-        </button>
+          onclick="deleteStudent('${s.id}', '${escapeHtml(s.full_name).replace(/'/g, "\\'")}')">Delete</button>
       </td>
     </tr>`).join("");
 }
-
-window.deleteStudent = async function (studentId, name) {
-  if (!confirm(`Delete student "${name}"? This cannot be undone.`)) return;
-  const { error } = await supabaseClient.rpc("teacher_delete_student", { p_student_id: studentId });
+window.deleteStudent = async (id, name) => {
+  if (!confirm(`Delete student "${name}"?`)) return;
+  const { error } = await supabaseClient.rpc("teacher_delete_student", { p_student_id: id });
   if (error) return showToast(error.message, "error");
-  showToast(`Student "${name}" deleted.`, "success");
+  showToast("Student deleted.", "success");
   await loadTeacherClassView();
 };
-
 async function handleTeacherCreateStudent(e) {
   e.preventDefault();
   if (!isTeacherSubscriptionActive(currentProfile))
     return showToast("Trial expired. Ask Owner to waive your fee.", "error");
-
-  const fullName = document.getElementById("new-student-name").value.trim();
-  const rawUsername = document.getElementById("new-student-username").value;
-  const password = document.getElementById("new-student-password").value;
-  const schoolName = document.getElementById("new-student-school").value.trim();
-  const { clean, email } = usernameToEmail(rawUsername);
-  if (clean.length < 3)
-    return showToast("Username must be 3+ chars.", "error");
-
+  const { clean, email } = usernameToEmail(document.getElementById("new-student-username").value);
+  if (clean.length < 3) return showToast("Username 3+ chars.", "error");
   const btn = document.getElementById("create-student-btn");
-  btn.disabled = true; btn.textContent = "Creating Account...";
+  btn.disabled = true; btn.textContent = "Creating...";
   try {
-    const { data: existing } = await supabaseClient
-      .from("profiles").select("id").eq("username", clean).maybeSingle();
-    if (existing) throw new Error(`Username "${clean}" already taken.`);
-
+    const { data: existing } = await supabaseClient.from("profiles").select("id").eq("username", clean).maybeSingle();
+    if (existing) throw new Error(`Username "${clean}" taken.`);
     const { error } = await studentSignupClient.auth.signUp({
-      email, password,
-      options: {
-        data: {
-          role: "student", full_name: fullName,
-          username: clean, school_name: schoolName,
-          teacher_id: currentProfile.id,
-        },
-      },
+      email,
+      password: document.getElementById("new-student-password").value,
+      options: { data: {
+        role: "student",
+        full_name: document.getElementById("new-student-name").value.trim(),
+        username: clean,
+        school_name: document.getElementById("new-student-school").value.trim(),
+        teacher_id: currentProfile.id,
+      } },
     });
     if (error) throw error;
-
-    showToast(`Student "${fullName}" created! Username: ${clean}`, "success");
+    showToast(`Student created! Username: ${clean}`, "success");
     e.target.reset();
     document.getElementById("new-student-school").value = currentProfile.school_name || "";
     await loadTeacherClassView();
   } catch (err) {
-    showToast(err.message || "Could not create student.", "error");
+    showToast(err.message || "Create failed.", "error");
   } finally {
     btn.disabled = false; btn.textContent = "Create Student Account";
   }
 }
 
 // ----------------------------------------------------------------------------
+// Teacher: Topics overview
+// ----------------------------------------------------------------------------
+async function loadTeacherTopicsView() {
+  const tbody = document.getElementById("teacher-topics-tbody");
+  const { data, error } = await supabaseClient.rpc("teacher_topic_stats");
+  if (error) { tbody.innerHTML = `<tr><td colspan="4" class="muted">${escapeHtml(error.message)}</td></tr>`; return; }
+  if (!data || !data.length) { tbody.innerHTML = `<tr><td colspan="4" class="muted">No topics yet.</td></tr>`; return; }
+  tbody.innerHTML = data.map(t => `
+    <tr>
+      <td><strong>${escapeHtml(t.topic_icon)} ${escapeHtml(t.topic_name)}</strong></td>
+      <td>${escapeHtml(t.topic_stage_group)}</td>
+      <td>${t.question_count}</td>
+      <td>${t.solved_by_class}</td>
+    </tr>`).join("");
+}
+
+// ----------------------------------------------------------------------------
 // Student: Practice
 // ----------------------------------------------------------------------------
 async function loadStudentPracticeView() {
-  const [topicsRes, questionsRes, attemptsRes, profileRes, countsRes] = await Promise.all([
+  const [topicsRes, qRes, attRes, profRes, cntRes] = await Promise.all([
     supabaseClient.from("topics").select("*").order("name"),
     supabaseClient.from("questions").select("*").order("created_at", { ascending: true }),
-    supabaseClient.from("student_attempts")
-      .select("question_id, is_correct")
-      .eq("student_id", currentProfile.id)
-      .eq("is_correct", true),
-    supabaseClient.from("profiles").select("score, questions_solved")
-      .eq("id", currentProfile.id).single(),
+    supabaseClient.from("student_attempts").select("question_id, is_correct")
+      .eq("student_id", currentProfile.id).eq("is_correct", true),
+    supabaseClient.from("profiles").select("score, questions_solved").eq("id", currentProfile.id).single(),
     supabaseClient.rpc("get_question_answer_counts"),
   ]);
-
-  if (profileRes.data) {
-    currentProfile.score = profileRes.data.score;
-    currentProfile.questions_solved = profileRes.data.questions_solved;
+  if (profRes.data) {
+    currentProfile.score = profRes.data.score;
+    currentProfile.questions_solved = profRes.data.questions_solved;
   }
   document.getElementById("student-my-score").textContent = currentProfile.score;
   document.getElementById("student-my-solved").textContent = currentProfile.questions_solved;
   document.getElementById("header-score-badge").textContent = `${currentProfile.score} pts`;
 
-  const countMap = new Map(
-    (countsRes.data || []).map(r => [r.question_id, Number(r.required_count) || 0])
-  );
-
+  const counts = new Map((cntRes.data || []).map(r => [r.question_id, Number(r.required_count) || 0]));
   allTopics = topicsRes.data || [];
-  allQuestions = (questionsRes.data || []).map(q => ({
-    ...q,
-    slot_count: countMap.get(q.id) || 0,
-  }));
-  mySolvedQuestionIds = new Set((attemptsRes.data || []).map(a => a.question_id));
-
+  allQuestions = (qRes.data || []).map(q => ({ ...q, slot_count: counts.get(q.id) || 0 }));
+  mySolvedQuestionIds = new Set((attRes.data || []).map(a => a.question_id));
   renderStudentTopicsGrid();
   if (activeTopicId) renderStudentTopicQuestions();
 }
-
 function renderStudentTopicsGrid() {
   const grid = document.getElementById("student-topics-grid");
-  if (allTopics.length === 0) {
-    grid.innerHTML = `<p class="muted">No topics yet.</p>`;
-    return;
-  }
-  grid.innerHTML = allTopics.map(topic => {
-    const tq = allQuestions.filter(q => q.topic_id === topic.id);
+  if (!allTopics.length) { grid.innerHTML = `<p class="muted">No topics yet.</p>`; return; }
+  grid.innerHTML = allTopics.map(t => {
+    const tq = allQuestions.filter(q => q.topic_id === t.id);
     const solved = tq.filter(q => mySolvedQuestionIds.has(q.id)).length;
     return `
-      <div class="topic-card" onclick="openStudentTopic('${topic.id}')">
-        <div class="topic-icon">${escapeHtml(topic.icon)}</div>
-        <h3>${escapeHtml(topic.name)}</h3>
-        <p>${escapeHtml(topic.description || topic.stage_group)}</p>
+      <div class="topic-card" onclick="openStudentTopic('${t.id}')">
+        <div class="topic-icon">${escapeHtml(t.icon)}</div>
+        <h3>${escapeHtml(t.name)}</h3>
+        <p>${escapeHtml(t.description || t.stage_group)}</p>
         <div class="topic-progress">
-          <span>${tq.length} Question(s)</span>
-          <span>✅ ${solved} Solved</span>
+          <span>${tq.length} Question(s)</span><span>✅ ${solved} Solved</span>
         </div>
       </div>`;
   }).join("");
 }
-
-window.openStudentTopic = function (topicId) {
-  activeTopicId = topicId;
-  const topic = allTopics.find(t => t.id === topicId);
-  document.getElementById("active-topic-heading").textContent =
-    topic ? `${topic.icon} ${topic.name}` : "Questions";
+window.openStudentTopic = (id) => {
+  activeTopicId = id;
+  const t = allTopics.find(x => x.id === id);
+  document.getElementById("active-topic-heading").textContent = t ? `${t.icon} ${t.name}` : "Questions";
   document.getElementById("student-topics-grid").classList.add("hidden");
   document.getElementById("student-topic-questions-area").classList.remove("hidden");
   renderStudentTopicQuestions();
 };
-
 function renderStudentTopicQuestions() {
   const filter = document.getElementById("student-q-filter").value;
   let qs = allQuestions.filter(q => q.topic_id === activeTopicId);
   if (filter === "solved") qs = qs.filter(q => mySolvedQuestionIds.has(q.id));
   if (filter === "unsolved") qs = qs.filter(q => !mySolvedQuestionIds.has(q.id));
-
   const c = document.getElementById("student-questions-list");
-  if (qs.length === 0) { c.innerHTML = `<p class="muted">No questions match this filter.</p>`; return; }
-
+  if (!qs.length) { c.innerHTML = `<p class="muted">No questions match.</p>`; return; }
   c.innerHTML = qs.map(q => {
-    const isSolved = mySolvedQuestionIds.has(q.id);
-    const slotCount = q.slot_count || 0;
-
-    let inputsHtml = "";
-    if (slotCount > 0) {
-      for (let i = 0; i < slotCount; i++) {
-        inputsHtml += `
+    const solved = mySolvedQuestionIds.has(q.id);
+    const slots = q.slot_count || 0;
+    let inputs = "";
+    if (slots > 0) {
+      for (let i = 0; i < slots; i++) {
+        inputs += `
           <label class="answer-slot-label">Answer #${i + 1}</label>
-          <input type="text" class="answer-slot" data-qid="${q.id}"
-                 data-index="${i}" placeholder="Answer ${i + 1}"
-                 ${isSolved ? "disabled" : ""} />`;
+          <input type="text" class="answer-slot" data-qid="${q.id}" data-index="${i}"
+                 placeholder="Answer ${i + 1}" ${solved ? "disabled" : ""} />`;
       }
     } else {
-      inputsHtml = `
-        <label class="answer-slot-label">Answer</label>
-        <input type="text" class="answer-slot" data-qid="${q.id}"
-               data-index="0" placeholder="Enter your answer..."
-               ${isSolved ? "disabled" : ""} />`;
+      inputs = `<label class="answer-slot-label">Answer</label>
+        <input type="text" class="answer-slot" data-qid="${q.id}" data-index="0"
+               placeholder="Enter your answer..." ${solved ? "disabled" : ""} />`;
     }
-
     return `
-      <div class="question-card ${isSolved ? "solved" : ""}" id="q-card-${q.id}">
+      <div class="question-card ${solved ? "solved" : ""}" id="q-card-${q.id}">
         <div class="question-img-box" onclick="openImageZoom('${escapeHtml(q.image_url)}')">
           <img src="${escapeHtml(q.image_url)}" alt="${escapeHtml(q.title)}" />
         </div>
         <div class="question-body">
           <div class="question-meta">
             <span class="stage-tag">${escapeHtml(q.stage)}</span>
-            <span class="points-tag">${isSolved ? "✅ Solved" : `+${q.points} pts`}</span>
-            ${slotCount > 1 ? `<span class="stage-tag">${slotCount} answers</span>` : ""}
+            <span class="points-tag">${solved ? "✅ Solved" : `+${q.points} pts`}</span>
+            ${slots > 1 ? `<span class="stage-tag">${slots} answers</span>` : ""}
           </div>
           <strong>${escapeHtml(q.title)}</strong>
           <form class="student-answer-form" onsubmit="handleStudentSubmitAnswer(event, '${q.id}')">
-            ${inputsHtml}
-            <button type="submit" class="btn btn-primary btn-sm"
-                    ${isSolved ? "disabled" : ""}>
-              ${isSolved ? "✅ Solved" : "Check"}
+            ${inputs}
+            <button type="submit" class="btn btn-primary btn-sm" ${solved ? "disabled" : ""}>
+              ${solved ? "✅ Solved" : "Check"}
             </button>
           </form>
           <div id="feedback-${q.id}" class="attempt-feedback hidden"></div>
+          <div id="hint-${q.id}" class="ai-hint-bubble hidden"></div>
         </div>
       </div>`;
   }).join("");
 }
 
-window.handleStudentSubmitAnswer = async function (e, questionId) {
+window.handleStudentSubmitAnswer = async (e, questionId) => {
   e.preventDefault();
-  const feedback = document.getElementById(`feedback-${questionId}`);
   const form = e.target;
+  const feedback = document.getElementById(`feedback-${questionId}`);
+  const hintBox = document.getElementById(`hint-${questionId}`);
+  hintBox.classList.add("hidden");
+  hintBox.textContent = "";
+
   const inputs = Array.from(form.querySelectorAll("input.answer-slot"));
   const answers = inputs.map(i => i.value.trim());
-
-  // Every visible input must be filled
-  if (answers.some(a => a.length === 0)) {
-    return showToast("Please fill in every answer box.", "error");
-  }
+  if (answers.some(a => !a)) return showToast("Fill in every answer box.", "error");
 
   const payload = JSON.stringify(answers);
-
   const { data, error } = await supabaseClient.rpc("submit_answer", {
-    p_question_id: questionId,
-    p_answer: payload,
+    p_question_id: questionId, p_answer: payload,
   });
   if (error) return showToast(error.message, "error");
 
@@ -825,8 +764,7 @@ window.handleStudentSubmitAnswer = async function (e, questionId) {
     document.getElementById(`q-card-${questionId}`).classList.add("solved");
     form.querySelectorAll("input").forEach(i => i.disabled = true);
     const btn = form.querySelector("button");
-    btn.textContent = "✅ Solved";
-    btn.disabled = true;
+    btn.textContent = "✅ Solved"; btn.disabled = true;
     feedback.classList.add("ok");
     feedback.textContent = data.points_awarded > 0
       ? `🎉 Correct! +${data.points_awarded} points!`
@@ -835,12 +773,32 @@ window.handleStudentSubmitAnswer = async function (e, questionId) {
     renderStudentTopicsGrid();
   } else {
     feedback.classList.add("bad");
-    feedback.textContent = `❌ Not quite right — check each answer and try again!`;
+    feedback.textContent = "❌ Not quite right. Getting a hint...";
+    hintBox.classList.remove("hidden");
+    hintBox.innerHTML = `<span class="hint-loading">🤖 Thinking…</span>`;
+    const { data: sessionData } = await supabaseClient.auth.getSession();
+    const token = sessionData?.session?.access_token;
+    const cfg = getSupabaseConfig();
+    try {
+      const resp = await fetch(`${cfg.url}/functions/v1/ai-hint`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "apikey": cfg.key,
+        },
+        body: JSON.stringify({ question_id: questionId, student_answer: answers.join(" | ") }),
+      });
+      const j = await resp.json();
+      hintBox.textContent = j.hint || "Try re-reading the question and checking each step.";
+    } catch {
+      hintBox.textContent = "Try re-reading the question and checking each step.";
+    }
   }
 };
 
 // ----------------------------------------------------------------------------
-// Student: Class Dashboard
+// Student class dashboard
 // ----------------------------------------------------------------------------
 async function loadStudentClassDashboard() {
   if (!currentProfile.teacher_id) {
@@ -848,15 +806,13 @@ async function loadStudentClassDashboard() {
       `<tr><td colspan="5" class="muted">No teacher assigned.</td></tr>`;
     return;
   }
-  const [classmatesRes, teacherRes] = await Promise.all([
+  const [classRes, teacherRes] = await Promise.all([
     supabaseClient.from("profiles").select("*").eq("role", "student")
-      .eq("teacher_id", currentProfile.teacher_id)
-      .order("score", { ascending: false })
-      .order("questions_solved", { ascending: false }),
+      .eq("teacher_id", currentProfile.teacher_id).order("score", { ascending: false }),
     supabaseClient.from("profiles").select("full_name, school_name")
       .eq("id", currentProfile.teacher_id).maybeSingle(),
   ]);
-  const list = classmatesRes.data || [];
+  const list = classRes.data || [];
   if (teacherRes.data) {
     document.getElementById("student-class-subtitle").textContent =
       `Teacher: ${teacherRes.data.full_name} • ${teacherRes.data.school_name || ""}`;
@@ -866,10 +822,7 @@ async function loadStudentClassDashboard() {
     idx >= 0 ? `Your Class Rank: #${idx + 1} of ${list.length}` : "Your Class Rank: #-";
 
   const tbody = document.getElementById("student-class-tbody");
-  if (list.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="muted">No classmates yet.</td></tr>`;
-    return;
-  }
+  if (!list.length) { tbody.innerHTML = `<tr><td colspan="5" class="muted">No classmates.</td></tr>`; return; }
   tbody.innerHTML = list.map((s, i) => {
     const me = s.id === currentProfile.id;
     return `
@@ -884,46 +837,38 @@ async function loadStudentClassDashboard() {
 }
 
 // ----------------------------------------------------------------------------
-// Global Dashboard
+// Global
 // ----------------------------------------------------------------------------
 async function loadGlobalDashboard() {
-  const { data: students, error } = await supabaseClient
-    .from("profiles").select("*").eq("role", "student")
-    .order("score", { ascending: false })
-    .order("questions_solved", { ascending: false });
+  const { data, error } = await supabaseClient.from("profiles").select("*")
+    .eq("role", "student").order("score", { ascending: false });
   if (error) return showToast(error.message, "error");
-  globalStudentsCache = (students || []).map((s, i) => ({ ...s, rank: i + 1 }));
+  globalStudentsCache = (data || []).map((s, i) => ({ ...s, rank: i + 1 }));
   renderGlobalPodium();
   renderGlobalLeaderboard();
 }
-
 function renderGlobalPodium() {
-  const podium = document.getElementById("global-podium");
-  const top3 = globalStudentsCache.slice(0, 3);
-  if (top3.length === 0) { podium.innerHTML = ""; return; }
+  const p = document.getElementById("global-podium");
+  const top = globalStudentsCache.slice(0, 3);
+  if (!top.length) { p.innerHTML = ""; return; }
   const medals = ["🥇", "🥈", "🥉"];
-  podium.innerHTML = top3.map((s, i) => `
+  p.innerHTML = top.map((s, i) => `
     <div class="podium-card rank-${i + 1}">
       <div class="podium-medal">${medals[i]}</div>
       <h4>#${i + 1} ${escapeHtml(s.full_name)}</h4>
-      <div class="muted">${escapeHtml(s.school_name || "Cambridge School")}</div>
+      <div class="muted">${escapeHtml(s.school_name || "")}</div>
       <div class="podium-score">${s.score} pts</div>
       <small class="muted">${s.questions_solved} solved</small>
     </div>`).join("");
 }
-
 function renderGlobalLeaderboard() {
   const q = document.getElementById("global-search").value.trim().toLowerCase();
   const tbody = document.getElementById("global-leaderboard-tbody");
   const filtered = q
-    ? globalStudentsCache.filter(s =>
-        s.full_name.toLowerCase().includes(q) ||
-        (s.school_name || "").toLowerCase().includes(q))
+    ? globalStudentsCache.filter(s => s.full_name.toLowerCase().includes(q)
+      || (s.school_name || "").toLowerCase().includes(q))
     : globalStudentsCache;
-  if (filtered.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="5" class="muted">No students yet.</td></tr>`;
-    return;
-  }
+  if (!filtered.length) { tbody.innerHTML = `<tr><td colspan="5" class="muted">No students.</td></tr>`; return; }
   tbody.innerHTML = filtered.map(s => {
     const me = currentProfile && s.id === currentProfile.id;
     return `
@@ -935,4 +880,104 @@ function renderGlobalLeaderboard() {
         <td><strong>${s.score} pts</strong></td>
       </tr>`;
   }).join("");
+}
+
+// ----------------------------------------------------------------------------
+// Inbox / DMs
+// ----------------------------------------------------------------------------
+async function refreshUnreadBadge() {
+  if (!currentProfile) return;
+  try {
+    const { data } = await supabaseClient.rpc("unread_message_count");
+    const n = Number(data) || 0;
+    const badge = document.getElementById("inbox-badge");
+    if (n > 0) { badge.textContent = n; badge.style.display = "inline-block"; }
+    else badge.style.display = "none";
+  } catch { /* ignore */ }
+}
+async function fetchContacts() {
+  const role = currentProfile.role;
+  if (role === "owner") {
+    const { data } = await supabaseClient.from("profiles").select("*")
+      .in("role", ["teacher", "student"]).order("full_name");
+    return data || [];
+  }
+  if (role === "teacher") {
+    const [studRes, ownerRes] = await Promise.all([
+      supabaseClient.from("profiles").select("*").eq("role", "student")
+        .eq("teacher_id", currentProfile.id).order("full_name"),
+      supabaseClient.from("profiles").select("*").eq("role", "owner"),
+    ]);
+    return [...(studRes.data || []), ...(ownerRes.data || [])];
+  }
+  const ids = [currentProfile.teacher_id].filter(Boolean);
+  if (!ids.length) return [];
+  const { data } = await supabaseClient.from("profiles").select("*").in("id", ids);
+  return data || [];
+}
+async function openInbox() {
+  document.getElementById("inbox-modal").classList.remove("hidden");
+  document.getElementById("inbox-empty-hint").style.display = "block";
+  activeConversationId = null;
+  await renderContacts();
+  await renderThread();
+}
+async function openInboxWith(contactId) {
+  document.getElementById("inbox-modal").classList.remove("hidden");
+  activeConversationId = contactId;
+  await renderContacts();
+  await renderThread();
+}
+async function renderContacts() {
+  const list = await fetchContacts();
+  const c = document.getElementById("inbox-contact-list");
+  if (!list.length) { c.innerHTML = `<p class="muted" style="font-size:0.85rem;">No contacts.</p>`; return; }
+  c.innerHTML = list.map(u => `
+    <button class="inbox-contact ${u.id === activeConversationId ? "active" : ""}"
+      onclick="selectContact('${u.id}')">
+      ${escapeHtml(u.full_name)}${u.role === "owner" ? " 👑" : u.role === "teacher" ? " 👩‍🏫" : ""}
+    </button>`).join("");
+}
+window.selectContact = async (id) => {
+  activeConversationId = id;
+  await renderContacts();
+  await renderThread();
+  await supabaseClient.rpc("mark_conversation_read", { p_other_id: id });
+  refreshUnreadBadge();
+};
+async function renderThread() {
+  const thread = document.getElementById("inbox-thread");
+  if (!activeConversationId) {
+    thread.innerHTML = `<p class="muted" style="font-size:0.85rem;">Select a contact above.</p>`;
+    document.getElementById("inbox-empty-hint").style.display = "none";
+    return;
+  }
+  document.getElementById("inbox-empty-hint").style.display = "none";
+  const { data, error } = await supabaseClient.rpc("get_conversation", { p_other_id: activeConversationId });
+  if (error) { thread.innerHTML = `<p class="muted">${escapeHtml(error.message)}</p>`; return; }
+  if (!data || !data.length) { thread.innerHTML = `<p class="muted" style="font-size:0.85rem;">No messages yet. Say hello!</p>`; return; }
+  thread.innerHTML = data.map(m => {
+    const me = m.sender_id === currentProfile.id;
+    return `
+      <div class="msg-row ${me ? "me" : "them"}">
+        <div>
+          <div class="msg-bubble">${escapeHtml(m.body)}</div>
+          <div class="msg-meta">${fmtDate(m.created_at)}</div>
+        </div>
+      </div>`;
+  }).join("");
+  thread.scrollTop = thread.scrollHeight;
+}
+async function handleInboxSend(e) {
+  e.preventDefault();
+  if (!activeConversationId) return showToast("Select a contact first.", "error");
+  const input = document.getElementById("inbox-input");
+  const body = input.value.trim();
+  if (!body) return;
+  const { error } = await supabaseClient.rpc("send_message", {
+    p_recipient_id: activeConversationId, p_body: body,
+  });
+  if (error) return showToast(error.message, "error");
+  input.value = "";
+  await renderThread();
 }
