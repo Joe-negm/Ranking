@@ -26,7 +26,6 @@ let unreadPollTimer = null;
 let certCache = [];
 let certificatesRefreshTimer = null;
 
-// Avatar state
 let pendingAvatarFile = null;
 let pendingAvatarRemoved = false;
 
@@ -116,6 +115,36 @@ function refreshHeaderAvatar() {
   if (el) el.innerHTML = renderAvatarHtml(currentProfile, 34);
 }
 
+// ── FIXED: central helper that reads latest score/solved from DB and
+// updates every visible surface. Safe to call anytime; uses field-name
+// fallbacks so a slightly different RPC shape won't freeze the UI.
+async function refreshStudentScoreDisplay(profileData) {
+  if (!currentProfile) return;
+  let data = profileData;
+  if (!data || data.score === undefined || data.questions_solved === undefined) {
+    const { data: fresh } = await supabaseClient
+      .from("profiles")
+      .select("score, questions_solved, avatar_url")
+      .eq("id", currentProfile.id)
+      .single();
+    if (fresh) data = { ...(data || {}), ...fresh };
+  }
+  if (data) {
+    currentProfile.score = data.score ?? data.new_score ?? currentProfile.score ?? 0;
+    currentProfile.questions_solved =
+      data.questions_solved ?? data.solved ?? currentProfile.questions_solved ?? 0;
+    if (data.avatar_url !== undefined) currentProfile.avatar_url = data.avatar_url;
+  }
+  const scoreBadge = document.getElementById("header-score-badge");
+  if (scoreBadge && currentProfile.role === "student") {
+    scoreBadge.textContent = `${currentProfile.score} pts`;
+  }
+  const myScore = document.getElementById("student-my-score");
+  if (myScore) myScore.textContent = currentProfile.score;
+  const mySolved = document.getElementById("student-my-solved");
+  if (mySolved) mySolved.textContent = currentProfile.questions_solved;
+}
+
 function openAvatarModal() {
   pendingAvatarFile = null;
   pendingAvatarRemoved = false;
@@ -166,7 +195,6 @@ async function saveAvatar() {
     showToast(pendingAvatarRemoved ? "Avatar removed." : "Avatar updated!", "success");
     closeAvatarModal();
 
-    // Refresh whatever view is currently open so avatars stay in sync.
     const view = document.querySelector(".view-panel:not(.hidden)")?.id;
     if (view === "view-challenges") renderClassmateList();
     if (view === "view-global-dashboard") { renderGlobalPodium(); renderGlobalLeaderboard(); }
@@ -262,8 +290,18 @@ async function bootRoleWorkspace() {
 
   await switchWorkspaceView(tabs[0].id);
 
-  // Start realtime presence so students can see who else is online.
-  if (currentProfile.role === "student") await startPresenceTracking();
+  if (currentProfile.role === "student") {
+    await startPresenceTracking();
+
+    // ── FIXED: live profile subscription so header badge auto-syncs
+    supabaseClient
+      .channel(`profile-${currentProfile.id}`)
+      .on("postgres_changes",
+        { event: "UPDATE", schema: "public", table: "profiles",
+          filter: `id=eq.${currentProfile.id}` },
+        (payload) => { if (payload.new) refreshStudentScoreDisplay(payload.new); })
+      .subscribe();
+  }
 
   refreshUnreadBadge();
   if (unreadPollTimer) clearInterval(unreadPollTimer);
@@ -274,6 +312,11 @@ async function switchWorkspaceView(viewId) {
     b.classList.toggle("active", b.dataset.view === viewId));
   document.querySelectorAll(".view-panel").forEach(p =>
     p.classList.toggle("hidden", p.id !== `view-${viewId}`));
+
+  // ── FIXED: refresh the student's live score on every tab switch
+  if (currentProfile?.role === "student") {
+    try { await refreshStudentScoreDisplay(); } catch { /* ignore */ }
+  }
 
   if (viewId === "owner-questions") await loadOwnerQuestionsView();
   if (viewId === "owner-teachers") await loadOwnerTeachersView();
@@ -452,7 +495,6 @@ function bindStaticEvents() {
   document.getElementById("close-challenge-room")?.addEventListener("click", closeChallengeRoom);
   document.querySelector("#challenge-room-modal .modal-backdrop")?.addEventListener("click", closeChallengeRoom);
 
-  // Avatar modal
   document.getElementById("user-pill")?.addEventListener("click", (e) => {
     if (e.target.closest("button")) return;
     openAvatarModal();
@@ -954,22 +996,22 @@ window.handleStudentSubmitAnswer = async (e, questionId) => {
   if (error) return showToast(error.message, "error");
 
   feedback.classList.remove("hidden", "ok", "bad");
+
+  // ── FIXED: defensive field mapping + central refresh so the numbers
+  // can never freeze regardless of what the RPC returns.
   if (data.is_correct) {
     mySolvedQuestionIds.add(questionId);
-    currentProfile.score = data.new_score;
-    currentProfile.questions_solved = data.questions_solved;
-    document.getElementById("student-my-score").textContent = data.new_score;
-    document.getElementById("student-my-solved").textContent = data.questions_solved;
-    document.getElementById("header-score-badge").textContent = `${data.new_score} pts`;
+    const pointsAwarded = data.points_awarded ?? data.points ?? 0;
+    await refreshStudentScoreDisplay(data);
     document.getElementById(`q-card-${questionId}`).classList.add("solved");
     form.querySelectorAll("input").forEach(i => i.disabled = true);
     const btn = form.querySelector("button");
     btn.textContent = "✅ Solved"; btn.disabled = true;
     feedback.classList.add("ok");
-    feedback.textContent = data.points_awarded > 0
-      ? `🎉 Correct! +${data.points_awarded} points!`
+    feedback.textContent = pointsAwarded > 0
+      ? `🎉 Correct! +${pointsAwarded} points!`
       : `✅ Correct! (Already awarded)`;
-    if (data.points_awarded > 0) showToast(`+${data.points_awarded} points!`, "success");
+    if (pointsAwarded > 0) showToast(`+${pointsAwarded} points!`, "success");
     renderStudentTopicsGrid();
   } else {
     feedback.classList.add("bad");
@@ -1125,7 +1167,6 @@ async function fetchContacts() {
     ]);
     return [...(studRes.data || []), ...(ownerRes.data || [])];
   }
-  // Student: their teacher + every platform owner.
   const teacherIds = [currentProfile.teacher_id].filter(Boolean);
   const [teacherRes, ownerRes] = await Promise.all([
     teacherIds.length
@@ -1218,7 +1259,7 @@ async function handleInboxSend(e) {
 }
 
 // ----------------------------------------------------------------------------
-// Weekly certificates — owner sees all, students see only their own
+// Weekly certificates
 // ----------------------------------------------------------------------------
 async function loadCertificatesView() {
   if (typeof certificatesRefreshTimer !== "undefined" && certificatesRefreshTimer) {
@@ -1495,11 +1536,9 @@ let classmateCache = [];
 let summaryPollTimer = null;
 let activeChallengeId = null;
 
-// State signature tracking (prevents input re-render flicker during polling)
 let lastChallengeSignature = null;
 let hasAutoFocusedOwn = false;
 
-// Presence tracking
 let onlineUsersChannel = null;
 let onlineUsersMap = new Map();
 
@@ -1563,7 +1602,6 @@ async function stopPresenceTracking() {
 async function loadChallengesView() {
   await refreshChallengeSummary();
 
-  // Every student on the platform is challengeable — not just same-class.
   const { data: allStudents } = await supabaseClient
     .from("profiles")
     .select("id, full_name, username, school_name, score, teacher_id, avatar_url")
@@ -1588,7 +1626,6 @@ function renderClassmateList() {
     (c.school_name || "").toLowerCase().includes(query)
   );
 
-  // Online first, then highest score.
   filtered.sort((a, b) => {
     const ao = onlineUsersMap.has(a.id) ? 1 : 0;
     const bo = onlineUsersMap.has(b.id) ? 1 : 0;
@@ -1867,7 +1904,6 @@ async function refreshChallengeRoom() {
   const oppId = isChallenger ? row.opponent_id : row.challenger_id;
   const oppProfile = profileMap.get(oppId);
 
-  // Scoreboard
   document.getElementById("challenger-name").textContent = "You";
   document.getElementById("challenger-points").textContent = `${myPoints} pts`;
   document.getElementById("opponent-name").textContent = oppProfile?.full_name || "Opponent";
@@ -1877,7 +1913,6 @@ async function refreshChallengeRoom() {
   const oa = document.getElementById("opponent-avatar");
   if (oa) oa.innerHTML = renderAvatarHtml(oppProfile || { full_name: "?" }, 48);
 
-  // My question area
   const qArea = document.getElementById("challenge-my-question");
   if (row.status !== "active") {
     qArea.innerHTML = `<p class="muted">Challenge not active.</p>`;
@@ -1925,7 +1960,6 @@ async function refreshChallengeRoom() {
     qArea.innerHTML = `<p class="muted">No question assigned.</p>`;
   }
 
-  // Steal area
   const stealArea = document.getElementById("challenge-steal-area");
   const stealQArea = document.getElementById("challenge-steal-question");
   const canSteal = oppResult && oppResult !== "correct" && !myStealResult
@@ -1968,7 +2002,6 @@ async function refreshChallengeRoom() {
     stealArea.classList.add("hidden");
   }
 
-  // Result banner
   const resultBanner = document.getElementById("challenge-result-banner");
   if (row.status === "completed") {
     resultBanner.classList.remove("hidden", "win", "loss", "draw");
@@ -1986,7 +2019,6 @@ async function refreshChallengeRoom() {
     resultBanner.classList.add("hidden");
   }
 
-  // Auto-finalize
   if (row.status === "active") {
     const bothOwnDone = row.challenger_result && row.opponent_result;
     const chDone = row.challenger_result === "correct" || row.challenger_steal_result;
@@ -2034,6 +2066,7 @@ function tickChallengeTimer() {
   }
 }
 
+// ── FIXED: defensive field mapping + central refresh
 window.submitChallengeOwnAnswer = async function (e) {
   e.preventDefault();
   const inputs = Array.from(document.querySelectorAll("#challenge-my-question .challenge-answer-slot"));
@@ -2044,18 +2077,18 @@ window.submitChallengeOwnAnswer = async function (e) {
     p_challenge_id: activeChallengeId, p_answer: payload,
   });
   if (error) return showToast(error.message, "error");
-  if (data.is_correct) {
-    showToast(`✅ Correct! +${data.points_awarded} points`, "success");
-    currentProfile.score = data.new_score;
-    currentProfile.questions_solved = data.questions_solved;
-    document.getElementById("header-score-badge").textContent = `${data.new_score} pts`;
+  const pointsAwarded = data?.points_awarded ?? data?.points ?? 0;
+  if (data?.is_correct) {
+    showToast(`✅ Correct! +${pointsAwarded} points`, "success");
   } else {
     showToast("❌ Wrong — your opponent may steal.", "error");
   }
+  await refreshStudentScoreDisplay();
   lastChallengeSignature = null;
   await refreshChallengeRoom();
 };
 
+// ── FIXED: defensive field mapping + central refresh
 window.submitChallengeStealAnswer = async function (e) {
   e.preventDefault();
   const inputs = Array.from(document.querySelectorAll("#challenge-steal-question .challenge-steal-answer-slot"));
@@ -2066,13 +2099,13 @@ window.submitChallengeStealAnswer = async function (e) {
     p_challenge_id: activeChallengeId, p_answer: payload,
   });
   if (error) return showToast(error.message, "error");
-  if (data.is_correct) {
-    showToast(`⚡ STOLEN! +${data.points_awarded} points`, "success");
-    currentProfile.score = data.new_score;
-    document.getElementById("header-score-badge").textContent = `${data.new_score} pts`;
+  const pointsAwarded = data?.points_awarded ?? data?.points ?? 0;
+  if (data?.is_correct) {
+    showToast(`⚡ STOLEN! +${pointsAwarded} points`, "success");
   } else {
     showToast("❌ Steal failed.", "error");
   }
+  await refreshStudentScoreDisplay();
   lastChallengeSignature = null;
   await refreshChallengeRoom();
 };
